@@ -1,0 +1,8 @@
+{
+  "notes": [
+    "Overrides laid over the price table. The table is LiteLLM's model_prices_and_context_window.json: a copy ships with the server (server/model_prices_and_context_window.json), and the server refreshes it from LiteLLM once at start. Every cost the dashboard shows is an estimate; a model priced by neither reads n/a, never $0.",
+    "A row here prices the model id it is keyed by (lower case), in place of LiteLLM's row for that id. USD per million tokens.",
+    "Fields per tier: input, output, cacheRead, cacheWrite (Anthropic: 5-minute write; OpenAI: 30-minute write), cacheWrite1h (Anthropic: 1-hour write; OpenAI: 12-hour write). 'long' is the price for a long request: Claude, a prompt (input + cache reads + cache writes) over 100,000 tokens; Codex, a request over 272,000 input tokens."
+  ],
+  "models": {}
+}

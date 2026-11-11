@@ -1,0 +1,68 @@
+{
+  "name": "sitrep-reporter",
+  "version": "0.3.0",
+  "description": "Reports this Claude Code session (model, effort, plan, agents, context, git, failures) to a SITREP server, and takes answers sent from it.",
+  "userConfig": {
+    "serverUrl": {
+      "type": "string",
+      "title": "SITREP server URL",
+      "description": "Where the reporter posts session reports.",
+      "default": "http://127.0.0.1:4317"
+    },
+    "token": {
+      "type": "string",
+      "title": "SITREP token",
+      "description": "The server's admin secret, sent with every report and request. Leave empty when the server has none.",
+      "default": "",
+      "sensitive": true
+    },
+    "flushIntervalMs": {
+      "type": "number",
+      "title": "Report interval (ms)",
+      "description": "Minimum time between reports while something changes.",
+      "default": 1000
+    },
+    "heartbeatMs": {
+      "type": "number",
+      "title": "Heartbeat (ms)",
+      "description": "Report at least this often even when nothing changed.",
+      "default": 5000
+    },
+    "sessionName": {
+      "type": "string",
+      "title": "Session name",
+      "description": "Display name for this machine's sessions. Usually left empty.",
+      "default": ""
+    },
+    "showStatus": {
+      "type": "boolean",
+      "title": "Status line",
+      "description": "The reporter's state under the prompt: 'dashboard v<version> ● N live', '○ connecting', '○ offline' or '○ token refused', then '· update plugin', '· update server' or '· update available' when the versions differ.",
+      "default": true
+    },
+    "fullPrompts": {
+      "type": "boolean",
+      "title": "Send full prompts and answers",
+      "description": "Send each agent's whole task prompt and final answer (up to 20,000 characters each, secrets redacted) so the dashboard can show them in full. Off by default: only the first 400 characters are sent.",
+      "default": false
+    },
+    "activityFeed": {
+      "type": "boolean",
+      "title": "Send recent activity",
+      "description": "While the dashboard has an agent's or the orchestrator's panel open, send that loop's recent tool calls and the text it writes between them (the last 20, each cut to 300 characters, secrets redacted). A Bash call also carries its whole command (up to 20,000 characters, secrets redacted) and how it ended; command output is never sent. The server keeps it in memory only. Needed for answering from the dashboard. On by default.",
+      "default": true
+    },
+    "respond": {
+      "type": "string",
+      "title": "Answer from the dashboard",
+      "description": "What this session accepts from the dashboard. off: nothing. questions: answers to questions, and new messages while idle. questions-and-plans: the above, plus approving or sending back a plan. everything: the above, plus allowing or denying a tool (allow once only), and /clear, /compact. Needs 'Send recent activity' on too, and the server's respond setting. The default is everything.",
+      "options": [
+        "off",
+        "questions",
+        "questions-and-plans",
+        "everything"
+      ],
+      "default": "everything"
+    }
+  }
+}

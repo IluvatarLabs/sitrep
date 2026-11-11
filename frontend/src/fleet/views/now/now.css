@@ -1,0 +1,444 @@
+/* The Fleet page. Tokens only (ui/tokens.css). The state bar runs flush across the top, the usage panel under it
+   when open (views/machines Usage.tsx); then Attention (Needs you beside Problems, stacked where two do not fit), then the Sessions:
+   their heading row with the layout switch and choices, then their layout. */
+
+/* Positioned, so visually hidden text inside it is placed within the view and never widens the page. */
+.now {
+  position: relative;
+  color: var(--ink);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+}
+.now-body {
+  display: grid;
+  gap: var(--s4);
+  padding: var(--s3) var(--s5) var(--s5);
+}
+.now :is(a, button):focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.now-h2 {
+  margin: 0 0 var(--s2);
+  font-size: var(--t-md);
+  font-weight: 600;
+  line-height: var(--lh-md);
+}
+.now-name {
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+}
+.now-name:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ---- the state bar: one 40 px row of compact chips, then the spend and plan windows pushed to its right end, the button that
+   opens the usage panel. Where the row is too narrow, the figures wrap under the chips as one line; the chips themselves never
+   break (MIN_MAIN holds them). ---- */
+
+.sb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--s4);
+  min-height: 40px;
+  padding: var(--s1) var(--s5);
+  border-bottom: 1px solid var(--rule);
+}
+.sb-chips {
+  display: flex;
+  flex: none;
+}
+.sb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  height: 32px;
+  padding: 0 var(--s2);
+  font: 500 var(--t-sm) / 1 var(--font-ui);
+  color: var(--ink-2);
+  white-space: nowrap;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  cursor: pointer;
+}
+.sb-chip b {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--ink);
+}
+.sb-chip:hover {
+  color: var(--ink);
+  background: var(--band);
+}
+/* Chosen: the selected language (a tone step and an ink underline). */
+.sb-chip[aria-pressed="true"] {
+  color: var(--ink);
+  background: var(--band);
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
+/* A count of 0 keeps its place, muted. */
+.sb-chip[data-zero] {
+  color: var(--muted);
+}
+.sb-chip[data-zero] b {
+  font-weight: 400;
+  color: var(--muted);
+}
+.sb-end {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 32px;
+  margin-left: auto;
+  padding: 0;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  border-radius: var(--r-control);
+  cursor: pointer;
+}
+.sb-end:hover,
+.sb-end[aria-expanded="true"] {
+  color: var(--ink);
+}
+/* Open, it is marked as a chosen chip is (a 2 px ink underline on the band) and its chevron turns: the panel under it is its. */
+.sb-end[aria-expanded="true"] {
+  background: var(--band);
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
+.sb-end {
+  padding: 0 var(--s2);
+}
+.sb-end > .ctl-chev {
+  color: var(--muted);
+}
+.sb-unpriced {
+  color: var(--muted);
+}
+.sb-end > span + span::before {
+  content: "·";
+  content: "·" / "";
+  margin-right: var(--s2);
+  color: var(--muted);
+}
+.sb-win {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+}
+/* A plan window: orange from 75 %, red from 90 % (limits.ts), the warning colours the context bar uses. */
+.sb-win[data-level="hot"] {
+  font-weight: 600;
+  color: var(--warn-text);
+}
+.sb-win[data-level="crit"] {
+  font-weight: 600;
+  color: var(--fail);
+}
+
+/* ---- Attention: Needs you and Problems under one header, drawn as a machine's. Shut, the header and the rule under it. Open,
+   the two lists sit side by side down to two 260 px columns (a 1280 window with both panes open), each a box an eighth of the window tall that scrolls its rows, at
+   every count, so the section's height changes only when it is opened or shut, never with the data, and the Sessions below stay
+   put. The rule under it runs the main view's full width, like the state bar's and the usage panel's. Each box reaches 4 px past
+   its column on either side, padded back, so its rows keep their place and a focus ring at their edge is not cut off. --- */
+
+.now-attn {
+  margin-inline: calc(var(--s5) * -1);
+  padding: 0 var(--s5) var(--s3);
+  border-bottom: 1px solid var(--rule);
+}
+/* The band is a heading element: without this it keeps the browser's margins, 12 px above and below. */
+.now-attn > .ui-group-head {
+  margin: 0;
+}
+.now-top {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  align-items: start;
+  gap: var(--s5);
+  padding-top: var(--s2);
+}
+.now-top[hidden] {
+  display: none;
+}
+.nw-list,
+.pb-list {
+  height: 12.5vh;
+  min-height: 132px;
+  margin: 0 calc(var(--s1) * -1);
+  padding: 0 var(--s1);
+  overflow-y: auto;
+  list-style: none;
+}
+.nw-row {
+  display: grid;
+  gap: var(--s1);
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--rule);
+}
+.nw-l1 {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-width: 0;
+}
+/* The wait as a clock, the row's largest figure. */
+.nw-clock {
+  flex: none;
+  font: 600 var(--t-clock) / var(--lh-clock) var(--font-mono);
+  white-space: nowrap;
+}
+.nw-l1 > .ui-dots {
+  flex: 1;
+  color: var(--muted);
+}
+.nw-l2 {
+  display: grid;
+  gap: var(--s2);
+  min-width: 0;
+}
+.nw-l2:empty {
+  display: none;
+}
+.nw-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.nw-note {
+  color: var(--ink-2);
+}
+.nw-row.is-settled {
+  color: var(--muted);
+}
+.nw-row.is-settled .now-name {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+.pb-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 32px;
+  border-top: 1px solid var(--rule);
+}
+.pb-mark {
+  display: inline-flex;
+  flex: none;
+}
+/* A shared file: the Graph's collision diamond in ink (graph.css .gn-clash); no state's colour or shape. */
+.pb-clash {
+  fill: var(--ink);
+  stroke: var(--sheet);
+  stroke-width: 1.5;
+}
+.pb-row > .ui-dots {
+  flex: 1;
+  color: var(--muted);
+}
+.pb-row > .ui-dots > :nth-child(2) {
+  color: var(--ink);
+}
+.pb-row[data-state="stuck"] > .ui-dots > :nth-child(2) {
+  color: var(--warn-text);
+}
+.pb-row[data-state="failed"] > .ui-dots > :nth-child(2) {
+  color: var(--fail);
+}
+.pb-file {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+}
+
+/* ---- the Fleet ------------------------------------------------------------------------------------------------------ */
+
+.now-fleet {
+  min-width: 0;
+}
+.now-fleet-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s4);
+  margin-bottom: var(--s3);
+}
+.now-fleet-head .now-h2 {
+  margin: 0;
+}
+
+/* ---- the List: a row in two lines, each held to its height. Columns: the fold, the mark, the name, the model, Context,
+   Est. cost, Time, the pin (useResizable's MIN_MAIN is measured from these). ------------------------------------------- */
+
+.lr-head,
+.lr-line {
+  display: grid;
+  grid-template-columns: 24px 16px minmax(0, 1fr) 168px 72px 72px 64px 24px;
+  column-gap: var(--s2);
+}
+.lr-line {
+  grid-template-areas:
+    "fold mark name model ctx cost time pin"
+    ". . doing doing crew crew crew .";
+  align-items: center;
+  row-gap: var(--s1);
+}
+.lr-head {
+  padding-bottom: var(--s1);
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--muted);
+}
+.lr-sort {
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+.lr-sort:hover,
+.lr-sort[aria-pressed="true"] {
+  color: var(--ink);
+}
+.lr-sort[aria-pressed="true"] {
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.lr-sort.is-right {
+  text-align: right;
+}
+.lr-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lr {
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--rule);
+}
+.lr-rows > .lr:first-child {
+  border-top: 0;
+}
+.lr-fold {
+  grid-area: fold;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: var(--r-control);
+}
+button.lr-fold {
+  cursor: pointer;
+}
+button.lr-fold:hover {
+  color: var(--ink);
+  background: var(--band);
+}
+.lr-mark {
+  grid-area: mark;
+  display: inline-flex;
+}
+/* The name, cut with "…", then where it runs when that is not a terminal (a tag chip, Chips SurfaceChip, which a listed label's
+   short name keeps whole). */
+.lr-name {
+  grid-area: name;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+}
+.lr-name > .now-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lr-name > .surface {
+  flex: 0 1 auto;
+}
+.lr-model {
+  grid-area: model;
+  display: flex;
+  min-width: 0;
+}
+.lr-model > .chip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lr-fig {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s1);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.lr-fig b {
+  font-weight: 600;
+}
+.lr-ctx {
+  grid-area: ctx;
+}
+.lr-cost {
+  grid-area: cost;
+}
+.lr-time {
+  grid-area: time;
+}
+.lr-pin {
+  grid-area: pin;
+  justify-self: end;
+}
+.lr-doing {
+  grid-area: doing;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lr-crew {
+  grid-area: crew;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s2);
+  min-width: 0;
+  max-height: 32px;
+  overflow: hidden;
+}
+.lr-crew > .crew,
+.lr-crew .crew-sq {
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+/* An opened row: its line of stations on the sheet (where line bodies keep 3:1), beside its plan when it has one. */
+.lr-open {
+  display: grid;
+  gap: var(--s4);
+  margin: var(--s2) 0 0 var(--s6);
+  padding-left: var(--s3);
+  border-left: 1px solid var(--rule);
+}
+.lr-open.has-plan {
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.7fr);
+  align-items: start;
+}

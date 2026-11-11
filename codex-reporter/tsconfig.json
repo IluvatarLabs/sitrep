@@ -1,0 +1,18 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist",
+    // The repository root, so the shared contract imported from src/ as "../../server/src/fleet/protocol.js"
+    // compiles into dist/server/src/fleet/ next to dist/codex-reporter/src/ and the same import resolves at run time.
+    "rootDir": "..",
+    // src/report.ts imports plugin/hooks/redact.mjs, the redaction our Codex hook runs too: plain JavaScript, typed by its JSDoc
+    // and emitted to dist/codex-reporter/plugin/hooks/ beside dist/codex-reporter/src/, so the same relative import resolves.
+    "allowJs": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src"]
+}

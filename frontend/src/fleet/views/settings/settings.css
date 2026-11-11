@@ -1,0 +1,61 @@
+/* Settings: four sections of one-line rows (a name on the left, its value or control on the right, a rule between), the
+   price table, and the server's commands (the command row is machines.css's). Tokens only (ui/tokens.css). */
+
+.st { position: relative; min-width: 0; max-width: 960px; padding: var(--s4); }
+.st :is(h1, h2, h3, p) { margin: 0; }
+.st > * + * { margin-top: var(--s5); }
+.st-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); padding-bottom: var(--s2); border-bottom: 1px solid var(--rule); }
+.st-head h2 { font-size: var(--t-md); font-weight: 600; line-height: var(--lh-md); }
+.st-meta { color: var(--muted); font-size: var(--t-sm); line-height: var(--lh-sm); }
+.st .st-sub { margin-top: var(--s3); color: var(--muted); font-size: var(--t-xs); font-weight: 600; line-height: var(--lh-xs); }
+.st .st-row .st-sub { margin-top: 0; }
+
+/* A row: the shared ones (theme, notifications, the refresh choices) take the same look as the page's own. */
+.st-row,
+.st .ui-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s4);
+  min-height: 40px;
+  padding: var(--s1) 0;
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+  border-bottom: 1px solid var(--rule);
+}
+.st-value { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s2); min-width: 0; text-align: right; }
+/* A label with one muted line under it saying what the setting does. */
+.st-label { display: grid; min-width: 0; }
+.st-hint { color: var(--muted); font-size: var(--t-xs); line-height: var(--lh-xs); }
+.st-note { font-weight: 600; }
+.st-fail { color: var(--fail); }
+.st-fig { font-variant-numeric: tabular-nums; }
+.st-unit { min-width: 32px; color: var(--muted); text-align: left; }
+.st-num {
+  width: 80px;
+  height: 32px;
+  padding: 0 var(--s2);
+  font: 400 var(--t-sm) / 1 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  text-align: right;
+  background: var(--sheet);
+  border: 1px solid var(--control);
+  border-radius: var(--r-control);
+}
+.st-num:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.st-error { padding: var(--s2) 0; color: var(--fail); font-size: var(--t-sm); line-height: var(--lh-sm); }
+.st-code { color: var(--ink-2); font: var(--t-xs) / var(--lh-xs) var(--font-mono); }
+/* A key, as the keyboard labels it. */
+.st-key { min-width: 24px; padding: 0 var(--s1); color: var(--ink); font: 600 var(--t-xs) / var(--lh-xs) var(--font-mono); text-align: center; border: 1px solid var(--control); border-radius: var(--r-control); }
+.st .cmd { border-bottom: 1px solid var(--rule); }
+
+.st-scroll { max-width: 100%; overflow-x: auto; }
+.st-prices { width: 100%; border-collapse: collapse; font-size: var(--t-sm); line-height: var(--lh-sm); }
+.st-prices :is(th, td) { padding: var(--s1) var(--s2); border-bottom: 1px solid var(--rule); text-align: left; white-space: nowrap; }
+.st-prices thead th { color: var(--muted); font-size: var(--t-xs); font-weight: 400; line-height: var(--lh-xs); }
+.st-prices tbody th { font-weight: 400; }
+.st-prices .st-n { text-align: right; font-variant-numeric: tabular-nums; }
+/* A row's long-request prices: a second line under it, the two read as one model. */
+.st-prices .st-has-long > * { border-bottom-color: transparent; }
+.st-prices .st-long th { padding-left: var(--s4); color: var(--muted); }

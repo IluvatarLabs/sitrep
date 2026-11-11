@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SITREP</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script>
+      // The stored light, dark or System choice, applied before the first paint so it never flashes the other theme: the rule
+      // of readMode in src/fleet/useTheme.ts. Then the stored Animation choice (System, On, Off), so with Off nothing pulses in
+      // the first frames: the rule of readMotion in src/fleet/shell/useMotion.ts. Storage that cannot be read leaves System.
+      (function () {
+        var mode = "system";
+        try {
+          var saved = JSON.parse(localStorage.getItem("sitrep.theme"));
+          if (saved && /^(light|dark|system)$/.test(saved.mode)) mode = saved.mode;
+        } catch (e) {}
+        var dark = mode === "dark";
+        try {
+          dark = dark || (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        } catch (e) {}
+        document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        var motion = "system";
+        try {
+          var stored = JSON.parse(localStorage.getItem("sitrep.motion"));
+          if (stored === "system" || stored === "on" || stored === "off") motion = stored;
+        } catch (e) {}
+        document.documentElement.setAttribute("data-motion", motion);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

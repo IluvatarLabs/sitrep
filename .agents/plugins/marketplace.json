@@ -1,0 +1,10 @@
+{
+  "name": "sitrep",
+  "interface": { "displayName": "SITREP" },
+  "plugins": [
+    {
+      "name": "sitrep-codex",
+      "source": { "source": "local", "path": "./codex-reporter/plugin" }
+    }
+  ]
+}

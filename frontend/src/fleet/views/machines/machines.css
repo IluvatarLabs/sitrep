@@ -1,0 +1,114 @@
+/* Machines, the Fleet's usage panel (Usage.tsx), Add a machine, and the one command row (commands.tsx) that Settings
+   shares. Tokens only (ui/tokens.css): the 4-pt scale, the type tokens, radii of 2 px at most. Colour is state (the marks); the
+   usage panel's bars take each model family's colour and its charts their own; warnings are orange or red. */
+
+.mc { position: relative; min-width: 0; padding: var(--s4); }
+.mc :is(h1, h2, h3, p) { margin: 0; }
+.mc > * + * { margin-top: var(--s5); }
+.mc-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4); }
+.mc-tools, .mc-ask { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); font-size: var(--t-sm); line-height: var(--lh-sm); }
+
+.mc-num { font-variant-numeric: tabular-nums; }
+.mc-dim, .mc-meta { color: var(--muted); }
+.mc-meta { font-size: var(--t-sm); font-weight: 400; line-height: var(--lh-sm); }
+.mc-meta b { color: var(--ink); font-weight: 600; }
+.mc-warn { color: var(--ink); font-weight: 600; }
+.mc-sec-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); margin-bottom: var(--s1); }
+.mc-sec-head h2 { font-size: var(--t-md); font-weight: 600; line-height: var(--lh-md); }
+.mc .mc-h3 { margin-bottom: var(--s2); font-size: var(--t-sm); font-weight: 600; line-height: var(--lh-sm); }
+
+/* ---- the table, sized to fit the pane at 1440 px with both side panes open: cells 8 px apart, headers wrapping between
+   words, Versions on two lines, the Codex hooks cell wrapping, and the actions' buttons tighter; every other cell keeps one
+   line. Past that its own frame scrolls sideways. ----------- */
+
+.mc-scroll { position: relative; max-width: 100%; overflow-x: auto; }
+.mc-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--t-sm); line-height: var(--lh-sm); }
+.mc-table :is(th, td) { padding: var(--s2) var(--s1); border-bottom: 1px solid var(--rule); text-align: left; vertical-align: baseline; white-space: nowrap; }
+.mc-table thead th { color: var(--muted); font-size: var(--t-xs); font-weight: 400; line-height: var(--lh-xs); white-space: normal; vertical-align: bottom; }
+.mc-table .mc-wrap { white-space: normal; }
+.mc-daemon { display: block; }
+.mc-table tbody th { font-weight: 400; }
+/* A row's cells share its first line (a two-line Versions cell included); a figure stands clear of the text after it. */
+.mc-table .mc-n { padding-right: var(--s3); text-align: right; font-variant-numeric: tabular-nums; }
+.mc-name { display: inline-flex; align-items: center; gap: var(--s2); }
+.mc-name b { font-weight: 600; }
+.mc-os { display: inline-flex; }
+.mc-ver { display: inline-flex; align-items: center; gap: var(--s1); }
+.mc-table .mc-act { text-align: right; }
+.mc-act > * + * { margin-left: var(--s2); }
+.mc-act > .ui-button { padding: 0 var(--s2); }
+.mc-more { gap: var(--s1); padding: 0 var(--s2); }
+.mc-more[aria-expanded="true"] svg { transform: rotate(180deg); }
+
+/* A row's confirmation and its detail sit in full-width rows under it. */
+.mc-table :is(.mc-confirm, .mc-detail) > td { padding: var(--s3) var(--s4); white-space: normal; }
+.mc-confirm > td > * + * { margin-left: var(--s2); }
+.mc-detail-body { display: grid; gap: var(--s4); max-width: 1080px; }
+.mc-refusals { margin: 0; padding: 0; list-style: none; }
+.mc-refusals li { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; gap: var(--s3); padding: var(--s1) 0; overflow-wrap: anywhere; }
+
+/* ---- the usage panel under the Fleet's state bar: Machines' rules in the Fleet's 24 px gutter, ruled off from the page under
+   it -------------------------------------------------------------------------------------------------------------------- */
+
+.mc.mc-usage { padding: var(--s3) var(--s5) var(--s4); border-bottom: 1px solid var(--rule); }
+
+/* ---- Today: spend by model, a row each with a bar in its family's colour, and the fleet's two charts in theirs, on one row
+   where they fit, so the panel is only as tall as its charts; past four models the list scrolls in that height. ---------- */
+
+.mc-today { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: var(--s3) var(--s5); }
+.mc-byhead { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); min-height: 24px; margin-bottom: var(--s1); }
+.mc .mc-byhead .mc-h3 { margin: 0; color: var(--muted); font-weight: 400; }
+.mc-span-pick { display: inline-flex; gap: var(--s2); }
+.mc-span-pick button { padding: 0; white-space: nowrap; font: inherit; font-size: var(--t-xs); line-height: var(--lh-xs); color: var(--muted); background: none; border: 0; border-bottom: 2px solid transparent; cursor: pointer; }
+.mc-span-pick button:hover { color: var(--ink); }
+.mc-span-pick button[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.mc-bars { max-height: 96px; margin: 0; padding: 0; overflow-y: auto; list-style: none; font-size: var(--t-sm); line-height: var(--lh-sm); }
+.mc-bars li { display: grid; grid-template-columns: 9em minmax(24px, 1fr) auto; align-items: center; gap: 0 var(--s2); min-height: 24px; }
+.mc-bar-name { display: inline-flex; align-items: center; gap: var(--s1); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-bars .mc-num { text-align: right; font-variant-numeric: tabular-nums; }
+.mc-track { position: relative; height: 6px; overflow: hidden; background: var(--rule); }
+.mc-track i { position: absolute; inset: 0 auto 0 0; background: var(--c, var(--ink-2)); }
+.mc-bar-note { grid-column: 1 / -1; color: var(--muted); font-size: var(--t-xs); line-height: var(--lh-xs); }
+
+.mc-chart { min-width: 0; margin: 0; }
+.mc-chart figcaption { display: flex; justify-content: space-between; gap: var(--s2); margin-bottom: var(--s1); color: var(--muted); font-size: var(--t-sm); line-height: var(--lh-sm); }
+.mc-reading { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; white-space: pre; }
+.mc-plot { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--s2); height: 48px; }
+.mc-scale { display: flex; flex-direction: column; justify-content: space-between; color: var(--muted); font-size: var(--t-xs); font-variant-numeric: tabular-nums; line-height: 1; text-align: right; }
+.mc-plot svg { display: block; width: 100%; height: 48px; overflow: visible; }
+.mc-grid { stroke: var(--rule); stroke-width: 1; }
+.mc-base { stroke: var(--edge); stroke-width: 1; }
+.mc-line { fill: none; stroke: var(--c, var(--ink-2)); stroke-width: 2; stroke-linejoin: round; }
+.mc-area { fill: var(--c, var(--ink-2)); fill-opacity: 0.16; stroke: none; }
+.mc-cross { stroke: var(--ink); stroke-width: 1; }
+.mc-span { display: flex; justify-content: space-between; margin-top: var(--s1); color: var(--muted); font-size: var(--t-xs); line-height: var(--lh-xs); }
+
+/* ---- Add a machine, on the one panel ----------------------------------------------------------------------------------- */
+
+.mc-add { --panel-w: 640px; }
+.mc-add-body { display: grid; gap: var(--s4); padding: var(--s4) var(--s5); }
+.mc-add .ui-segment-options > button:disabled { cursor: default; }
+.mc-steps { display: grid; gap: var(--s3); margin: 0; padding-left: var(--s5); }
+.mc-steps li { padding-left: var(--s1); }
+.mc-steps li::marker { color: var(--muted); font-variant-numeric: tabular-nums; }
+.mc-step-note { display: block; margin-top: var(--s1); color: var(--muted); font-size: var(--t-xs); line-height: var(--lh-xs); }
+.mc-wait { display: flex; align-items: center; gap: var(--s2); margin: 0; color: var(--ink-2); }
+
+/* ---- one command: its label, the command (one click selects it whole), and Copy -------------------------------------- */
+
+.cmd { display: flex; align-items: center; gap: var(--s3); min-width: 0; padding: var(--s1) 0; font-size: var(--t-sm); line-height: var(--lh-sm); }
+.cmd-label { flex: none; width: 16em; max-width: 40%; }
+.cmd-note { margin-left: var(--s2); font-weight: 600; }
+.cmd-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--s1) var(--s2);
+  font: var(--t-xs) / var(--lh-xs) var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--code);
+  border-radius: var(--r-control);
+  user-select: all;
+}
+.cmd-copy { flex: none; display: inline-flex; align-items: center; gap: var(--s1); }
+.cmd-state { color: var(--muted); font-size: var(--t-xs); line-height: var(--lh-xs); }

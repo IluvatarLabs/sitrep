@@ -1,0 +1,191 @@
+/* The Fleet's controls and shared parts (controls.tsx). Buttons, the segmented control, selects and the group band are the
+   console's shared controls (ui/ui.css); this sheet lays them out. Tokens only (ui/tokens.css). */
+
+.ctl-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s4);
+  min-width: 0;
+}
+.ctl-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--t-sm);
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* A select as wide as the option it shows. */
+.ctl-field .ui-select {
+  field-sizing: content;
+}
+/* A toggle chip: pressed, it reads as selected (a tone step and an ink underline, as the segmented control). */
+.ui-button.ctl-chip[aria-pressed="true"] {
+  font-weight: 600;
+  background: var(--band);
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
+.ctl-chip b {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+/* A pin: an icon toggle, shown on its row's or card's hover, on focus, and while pinned. */
+.ctl-pin {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  cursor: pointer;
+  opacity: 0;
+}
+:is(.lr, .wc):hover .ctl-pin,
+.ctl-pin:focus-visible,
+.ctl-pin[aria-pressed="true"] {
+  opacity: 1;
+}
+.ctl-pin:hover {
+  color: var(--ink);
+  border-color: var(--control);
+}
+.ctl-pin[aria-pressed="true"] {
+  color: var(--ink);
+}
+.ctl-pin:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.ctl-chev {
+  flex: none;
+}
+
+.ctl-chip-sub {
+  font-weight: 400;
+  color: var(--muted);
+}
+/* A list's heading in Attention: its name and count, the count muted at 0. */
+.ctl-list-h {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s1);
+}
+.ctl-list-h b {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.ctl-list-h b[data-zero] {
+  font-weight: 400;
+  color: var(--muted);
+}
+/* Attention's counts on its header: muted at 0, ink with their mark when not, a failure red, stuck the warning orange. */
+.ctl-attn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+}
+.ctl-attn[data-on] {
+  font-weight: 600;
+  color: var(--ink);
+}
+.ctl-attn[data-tone="stuck"] {
+  color: var(--warn-text);
+}
+.ctl-attn[data-tone="failed"] {
+  color: var(--fail);
+}
+.ctl-chev.is-open {
+  transform: rotate(90deg);
+}
+
+/* A group's header: the shared group band on the heading, filled by the button that folds the group. */
+.ui-group-head.ctl-group-h {
+  padding: 0;
+}
+.ctl-group {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  min-height: 32px;
+  padding: var(--s1) var(--s3) var(--s1) var(--s2);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.ctl-group:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+.ctl-group .ctl-chev {
+  color: var(--muted);
+}
+.ctl-group:hover .ctl-chev {
+  color: var(--ink);
+}
+.ctl-group-os {
+  display: inline-flex;
+  color: var(--ink-2);
+}
+.ctl-group-name {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  line-height: var(--lh-sm);
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctl-group-name.is-path {
+  font-family: var(--font-mono);
+  font-weight: 400;
+}
+.ctl-group-meta {
+  min-width: 0;
+}
+/* Its parts sit at the line's top: an inline flex box's baseline is its first item's, a logo or a mark for the plan windows and
+   the counts, so on a shared baseline those would ride higher than the text beside them. */
+.ctl-group-meta .ui-dots > *,
+.ctl-group-meta .ui-dots > * > :is(.pw, .ui-needs, .ctl-attn) {
+  vertical-align: top;
+}
+/* A group's header keeps to one line, ending in "…" (Dots is-oneline). Its plan windows, the last part, run as text there, so
+   the "…" cuts into them first and they never wrap under the line. */
+.ctl-group-meta .is-oneline :is(.pw, .pw-provider, .pw-win) {
+  display: inline;
+}
+.ctl-group-meta .is-oneline .pw-provider + .pw-provider {
+  margin-left: var(--s3);
+}
+.ctl-group-meta .is-oneline .pw-win {
+  margin-left: var(--s2);
+}
+.ctl-group-meta .is-oneline .pw-pct {
+  margin-right: var(--s1);
+}
+.ctl-group-meta .is-oneline .pw-provider > svg.i.logo {
+  vertical-align: text-bottom;
+}
+
+/* Groups stacked, each its header over its body. */
+.ctl-groups {
+  display: grid;
+  gap: var(--s3);
+}
+.ctl-groupbox {
+  min-width: 0;
+}

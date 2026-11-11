@@ -1,0 +1,635 @@
+/* The answer panel's insides (it is the one panel, raised: ui/ui.css .ui-panel--modal), then its forms and receipts, the
+   message box (also on the session page) and the sign-in line (also in the top bar, and alone on the page behind the view
+   gate). Tokens only (ui/tokens.css); the body lines up with the head's 24 px inset. */
+
+/* ---- the head's line: where it runs and on what, the steps through the waits, the session page ------------------------ */
+
+.answer {
+  --panel-w: 480px;
+}
+.answer-crumb {
+  margin: 0 var(--s1);
+  font-weight: 400;
+  color: var(--muted);
+}
+.answer-sub {
+  display: grid;
+  gap: var(--s1);
+}
+.answer-machine {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+}
+.answer-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.answer-steps {
+  display: inline-flex;
+  align-items: center;
+}
+.answer-up svg {
+  transform: rotate(180deg);
+}
+.answer-place {
+  min-width: 56px;
+  font: 600 var(--t-xs) / var(--lh-xs) var(--font-mono);
+  text-align: center;
+  color: var(--ink-2);
+}
+.answer-page {
+  margin-left: auto;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  text-underline-offset: 3px;
+}
+
+/* ---- the body: the answer and the activity scroll; the message box stays at the foot ---------------------------------- */
+
+.answer .ui-panel-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.answer-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-color: var(--control) transparent;
+}
+.answer-compose {
+  flex: none;
+  padding: var(--s3) var(--s5) var(--s4);
+  background: var(--sheet);
+  border-top: 1px solid var(--rule);
+}
+
+/* ---- the answer panel ----------------------------------------------------------------------------------------------- */
+
+.answer-panel {
+  border-bottom: 1px solid var(--rule);
+}
+.answer-lead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  padding: var(--s4) var(--s5) 0;
+}
+.answer-lead b {
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+/* How long the ask has waited: a wait clock, in mono. */
+.answer-ago {
+  font: 600 var(--t-sm) / var(--lh-sm) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+.answer-also {
+  margin-left: auto;
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+.answer-section {
+  display: grid;
+  gap: var(--s3);
+  padding: var(--s3) var(--s5) var(--s4);
+}
+.answer-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s2);
+  padding: var(--s3) var(--s5) var(--s4);
+  border-top: 1px solid var(--rule);
+}
+.answer-foot-note {
+  flex: 1 1 180px;
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--muted);
+}
+.answer-q {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.answer-hint {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+}
+.answer-note {
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+  background: var(--band);
+  border-radius: var(--r-control);
+}
+.answer q {
+  quotes: none;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Questions: a tab per question (the shared ui-tabs), each with a box that fills once answered, then Review. */
+.answer-tab-box {
+  width: var(--s3);
+  height: var(--s3);
+  border: 1.5px solid var(--muted);
+  border-radius: 1px;
+}
+.ui-tabs > [data-done] .answer-tab-box {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+.answer-tabpanel {
+  display: grid;
+  gap: var(--s3);
+}
+
+/* Options: a radio or checkbox row each, its description under it. */
+.answer-qgrid {
+  display: grid;
+  gap: var(--s3);
+}
+.answer-opts {
+  display: grid;
+  gap: var(--s2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.answer-opt {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 0 var(--s3);
+  padding: var(--s3);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-control);
+  cursor: pointer;
+}
+.answer-opt:hover {
+  background: var(--band);
+}
+.answer-opt:has(> input:checked) {
+  background: var(--band);
+  border-color: var(--ink);
+}
+.answer-opt > input[type="radio"],
+.answer-opt > input[type="checkbox"] {
+  grid-column: 1;
+  grid-row: 1;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--ink);
+}
+.answer-opt-label {
+  grid-column: 2;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.answer-opt-desc {
+  grid-column: 2;
+  font-size: var(--t-sm);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.answer-opt > .answer-text {
+  grid-column: 2;
+  margin-top: var(--s2);
+}
+.answer-rec {
+  margin-left: var(--s2);
+  padding: 0 var(--s1);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  color: var(--ink-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-control);
+}
+.answer-text {
+  width: 100%;
+  min-width: 0;
+  padding: var(--s1) var(--s2);
+  font: inherit;
+  color: var(--ink);
+  background: var(--sheet);
+  border: 1px solid var(--control);
+  border-radius: var(--r-control);
+  resize: vertical;
+}
+.answer-text::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+.answer-preview {
+  overflow: hidden;
+  border: 1px solid var(--edge);
+  border-radius: var(--r-control);
+}
+.answer-preview-label {
+  padding: var(--s1) var(--s3);
+  font-size: var(--t-xs);
+  color: var(--muted);
+  background: var(--band);
+  border-bottom: 1px solid var(--rule);
+}
+.answer-preview pre {
+  max-height: 240px;
+  margin: 0;
+  padding: var(--s3);
+  overflow: auto;
+  font: 400 var(--t-xs) / var(--lh-xs) var(--font-mono);
+}
+.answer-review {
+  display: grid;
+  gap: var(--s3);
+  margin: 0;
+}
+.answer-review dt {
+  font-size: var(--t-sm);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.answer-review dd {
+  margin: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.answer-review dd[data-blank] {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* A plan: its file, then its markdown in a tone-step box. */
+.answer-planfile {
+  margin: 0;
+  font: 400 var(--t-xs) / var(--lh-xs) var(--font-mono);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.answer-plan {
+  max-height: 320px;
+  padding: var(--s3);
+  overflow: auto;
+  font-size: var(--t-sm);
+  overflow-wrap: anywhere;
+  background: var(--band);
+  border-radius: var(--r-control);
+}
+.answer-plan > :first-child {
+  margin-top: 0;
+}
+.answer-plan > :last-child {
+  margin-bottom: 0;
+}
+.answer-plan :is(h1, h2, h3, h4, h5, h6) {
+  margin: var(--s3) 0 var(--s1);
+  font-size: var(--t-md);
+  font-weight: 600;
+  line-height: var(--lh-md);
+}
+.answer-plan :is(p, ul, ol, blockquote, pre) {
+  margin: 0 0 var(--s2);
+}
+.answer-plan :is(ul, ol) {
+  padding-left: var(--s5);
+}
+.answer-plan code {
+  padding: 0 var(--s1);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  background: var(--code);
+  border-radius: var(--r-control);
+}
+.answer-plan pre {
+  padding: var(--s2) var(--s3);
+  overflow: auto;
+  background: var(--code);
+  border-radius: var(--r-control);
+}
+.answer-plan pre code {
+  padding: 0;
+  background: none;
+}
+.answer-plan blockquote {
+  padding-left: var(--s3);
+  color: var(--ink-2);
+  border-left: 1px solid var(--edge);
+}
+.answer-plan a {
+  color: var(--ink);
+  text-underline-offset: 2px;
+}
+
+/* A tool's request: the command or changes as written. */
+.answer-cmd {
+  max-height: 280px;
+  padding: var(--s2) var(--s3);
+  overflow: auto;
+  font: 400 var(--t-sm) / var(--lh-sm) var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--code);
+  border-radius: var(--r-control);
+}
+.answer-cmd-detail {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.answer-mono {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+}
+/* The request's other fields, under its command: each key, then its value in the command's own box. */
+.answer-fields {
+  display: grid;
+  gap: var(--s2);
+  margin: 0;
+}
+.answer-fields dt {
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.answer-fields dd {
+  margin: var(--s1) 0 0;
+}
+
+/* A receipt: what became of an answer. */
+.answer-out {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--s1) var(--s3);
+}
+.answer-out-icon {
+  display: inline-flex;
+  margin-top: 2px;
+  color: var(--muted);
+}
+.answer-out[data-tone="bad"] .answer-out-icon {
+  color: var(--fail);
+}
+.answer-out > b {
+  grid-column: 2;
+  font-weight: 600;
+}
+.answer-out-detail {
+  grid-column: 2;
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.answer-out-note {
+  display: block;
+  margin-top: var(--s1);
+  color: var(--ink);
+}
+.answer-out-acts {
+  grid-column: 2;
+  margin-top: var(--s2);
+}
+
+/* ---- the session's activity, folded under the panel ----------------------------------------------------------------- */
+
+.answer-feed {
+  border-bottom: 1px solid var(--rule);
+}
+.answer-feed > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s5);
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+}
+.answer-feed > summary::-webkit-details-marker {
+  display: none;
+}
+.answer-feed > summary::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--ink-2);
+  border-bottom: 1.5px solid var(--ink-2);
+  transform: rotate(-45deg);
+}
+.answer-feed[open] > summary::before {
+  transform: rotate(45deg);
+}
+.answer-feed > summary:hover {
+  background: var(--band);
+}
+/* How fresh the feed is (answering.tsx FeedFreshness), at the heading's right end. */
+.answer-feed-when {
+  margin-left: auto;
+  font-size: var(--t-xs);
+  font-weight: 400;
+  line-height: var(--lh-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.answer-feed-body {
+  display: grid;
+  gap: var(--s2);
+  padding: 0 var(--s5) var(--s4);
+}
+
+/* ---- the message box ------------------------------------------------------------------------------------------------ */
+
+.compose {
+  display: grid;
+  gap: var(--s2);
+}
+.compose-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s2);
+}
+.compose-box {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  max-height: 160px;
+  padding: var(--s1) var(--s2);
+  font: inherit;
+  color: var(--ink);
+  background: var(--sheet);
+  border: 1px solid var(--control);
+  border-radius: var(--r-control);
+  resize: vertical;
+  field-sizing: content;
+}
+.compose-box::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+.compose-box:focus-visible,
+.compose-command:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+.compose-error {
+  font-size: var(--t-sm);
+  color: var(--fail);
+}
+.compose-warn {
+  padding: var(--s1) var(--s2);
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+  background: var(--band);
+  border-radius: var(--r-control);
+}
+.compose-commands {
+  display: grid;
+  padding: var(--s1);
+  background: var(--sheet);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-control);
+}
+.compose-command {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  padding: var(--s1) var(--s2);
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: var(--r-control);
+  cursor: pointer;
+}
+.compose-command:hover,
+.compose-command[aria-selected="true"] {
+  background: var(--band);
+}
+.compose-command-name {
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+}
+.compose-command-desc {
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+.compose-commands-foot {
+  padding: var(--s1) var(--s2);
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+.compose-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  padding: var(--s2) var(--s3);
+  font-size: var(--t-sm);
+  background: var(--band);
+  border-radius: var(--r-control);
+}
+.compose-acts {
+  display: flex;
+  gap: var(--s2);
+  margin-left: auto;
+}
+.compose-off {
+  font-size: var(--t-sm);
+  color: var(--ink-2);
+}
+.compose-off b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ---- signing in: one line, the secret and Sign in, an error under it ------------------------------------------------- */
+
+.signin {
+  display: grid;
+  gap: var(--s2);
+}
+.signin-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+.signin-line > b {
+  font-weight: 600;
+}
+.signin-line input {
+  flex: 1 1 160px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 var(--s2);
+  font: inherit;
+  color: var(--ink);
+  background: var(--sheet);
+  border: 1px solid var(--control);
+  border-radius: var(--r-control);
+}
+.signin-line input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+.signin-line input:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+.signin-error {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--fail);
+}
+/* Who is signed in, then Sign out and Sign out everywhere, which take the next line where the popover is too narrow for both. */
+.signin-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2) var(--s3);
+  font-size: var(--t-sm);
+}
+.signin-acts {
+  display: flex;
+  gap: var(--s2);
+}
+/* The page while the server requires a sign-in to view: the product's name over the field, alone in the middle of the frame. */
+.signin-screen {
+  display: grid;
+  flex: 1;
+  grid-template-columns: min(440px, 100%);
+  place-content: center;
+  gap: var(--s4);
+  padding: var(--s5);
+}
+.signin-screen-name {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: 0;
+  font-size: var(--t-md);
+  font-weight: 700;
+  line-height: var(--lh-md);
+}
+.signin-note {
+  margin: 0;
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--muted);
+}

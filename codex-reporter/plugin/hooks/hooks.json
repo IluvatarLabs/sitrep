@@ -1,0 +1,17 @@
+{
+  "description": "SITREP observe-only hooks: each appends one bounded, redacted line to ~/.sitrep/codex-hooks.ndjson and exits 0. They never answer or decide a request.",
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "node \"$PLUGIN_ROOT/hooks/codex-hook.mjs\"", "async": true }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "node \"$PLUGIN_ROOT/hooks/codex-hook.mjs\"", "async": true }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node \"$PLUGIN_ROOT/hooks/codex-hook.mjs\"", "async": true }] }],
+    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "node \"$PLUGIN_ROOT/hooks/codex-hook.mjs\"", "async": true }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "node \"$PLUGIN_ROOT/hooks/codex-hook.mjs\"", "async": true }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "node \"$PLUGIN_ROOT/hooks/codex-hook.mjs\"", "async": true }] }],
+    "PreCompact": [{ "hooks": [{ "type": "command", "command": "node \"$PLUGIN_ROOT/hooks/codex-hook.mjs\"", "async": true }] }],
+    "PostCompact": [{ "hooks": [{ "type": "command", "command": "node \"$PLUGIN_ROOT/hooks/codex-hook.mjs\"", "async": true }] }],
+    "SubagentStart": [{ "hooks": [{ "type": "command", "command": "node \"$PLUGIN_ROOT/hooks/codex-hook.mjs\"", "async": true }] }],
+    "SubagentStop": [{ "hooks": [{ "type": "command", "command": "node \"$PLUGIN_ROOT/hooks/codex-hook.mjs\"", "async": true }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "node \"$PLUGIN_ROOT/hooks/codex-hook.mjs\"", "async": true }] }],
+    "Interrupt": [{ "hooks": [{ "type": "command", "command": "node \"$PLUGIN_ROOT/hooks/codex-hook.mjs\"", "async": true }] }]
+  }
+}

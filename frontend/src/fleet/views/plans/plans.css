@@ -1,0 +1,320 @@
+/* Plans: the board, in tokens only (ui/tokens.css): the heading row, the KPI rows with the tab on their edge, then five columns
+   of cards, each a page at a time. Square and flat: the columns on the band, the cards on the sheet. Hue only from a state: a
+   column's top bar in its steps' state colour (as the plan checklist marks them: in progress working green, Review needs-you
+   amber, blocked the warning orange, done grey, pending neutral), and each card's left edge in its session's state colour. Five
+   columns of at least 140 px fit the main pane at 1440 with the Activity pane open; below that width one column shows at a time,
+   picked by tabs. */
+
+/* The view is the pane's height, so the board takes what is left of it: a column grows with its cards to 640 px
+   or to the pane's foot, whichever comes first, then scrolls inside; at 1440 x 900 the board ends at the window's
+   foot. Under a 320 px board the pane scrolls instead. */
+.pb-page {
+  container-type: inline-size;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  min-width: 0;
+  height: 100%;
+  padding: var(--s4);
+  color: var(--ink);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+}
+.pb-page :is(a, button):focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.pb-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s4);
+}
+.pb-head > .ui-segment-options {
+  margin-left: auto;
+}
+
+/* ---- the KPI rows: four tiles a row on hairlines, each a label over its figure over a caption (the session facts' look) --- */
+
+.pb-kpi-block {
+  position: relative;
+  margin-bottom: var(--s2);
+}
+.pb-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--rule);
+  background: var(--rule);
+}
+.pb-kpis[hidden] {
+  display: none;
+}
+/* 8 px under each caption: the fold tab reaches 8 px into the rows and must not cover one. */
+.pb-kpi {
+  min-width: 0;
+  padding: var(--s2) var(--s3);
+  background: var(--sheet);
+}
+.pb-kpi-k,
+.pb-kpi-cap {
+  min-height: var(--lh-xs);
+  overflow: hidden;
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pb-kpi-v {
+  font: 600 var(--t-sm) / var(--lh-sm) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+/* The fold: a 32 x 16 tab on the rows' bottom edge, its chevron up to hide them; folded, the tab is a bar the rows' width with
+   its chevron down, so the rows are never taken for gone. */
+.pb-kpi-tab {
+  position: absolute;
+  top: calc(100% - 8px);
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 16px;
+  padding: 0;
+  color: var(--ink-2);
+  background: var(--sheet);
+  border: 1px solid var(--control);
+  border-radius: var(--r-control);
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+.pb-kpi-tab:hover {
+  color: var(--ink);
+  background: var(--band);
+}
+.pb-kpi-tab svg.i {
+  width: 12px;
+  height: 12px;
+}
+.pb-kpi-block:not(.shut) .pb-kpi-tab svg {
+  transform: rotate(180deg);
+}
+.pb-kpi-block.shut .pb-kpi-tab {
+  position: relative;
+  top: auto;
+  left: auto;
+  display: flex;
+  width: 100%;
+  transform: none;
+}
+
+/* ---- the column tabs, shown only where one column shows at a time ------------------------------------------------------ */
+
+.pb-page .pb-tabs {
+  display: none;
+}
+.pb-tab-n {
+  font: 400 var(--t-xs) / 1 var(--font-mono);
+  color: var(--muted);
+}
+
+/* ---- the columns ------------------------------------------------------------------------------------------------------- */
+
+.pb-board {
+  flex: 1 1 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  align-items: start;
+  gap: var(--s2);
+  min-height: 320px;
+  overflow-x: auto;
+}
+.pb-col {
+  --col: var(--control);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-height: min(640px, 100%);
+  padding-top: 3px;
+  background: var(--band);
+  border: 1px solid var(--rule);
+  border-top: 0;
+}
+.pb-col::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: -1px;
+  left: -1px;
+  height: 3px;
+  background: var(--col);
+}
+.pb-active {
+  --col: var(--line);
+}
+.pb-review {
+  --col: var(--held);
+}
+/* Blocked warns, as the plan checklist marks it (stuck's orange); its cards' edges too. */
+.pb-blocked {
+  --col: var(--stuck);
+}
+.pb-blocked .pb-card {
+  border-color: color-mix(in srgb, var(--stuck) 50%, var(--edge));
+}
+.pb-done {
+  --col: var(--done);
+}
+.pb-col-h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  padding: var(--s2) var(--s2) var(--s2) var(--s3);
+}
+.pb-col-h h3 {
+  margin: 0;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  line-height: var(--lh-sm);
+}
+.pb-n {
+  padding: 0 var(--s2);
+  font: 600 var(--t-xs) / var(--lh-xs) var(--font-mono);
+  color: var(--ink-2);
+  background: var(--sheet);
+  border-radius: var(--r-control);
+}
+.pb-col-b {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-height: 0;
+  padding: 0 var(--s2) var(--s2);
+  overflow: auto;
+  scrollbar-color: var(--control) transparent;
+}
+.pb-col > .ui-pager {
+  padding: var(--s2);
+  border-top: 1px solid var(--rule);
+}
+.pb-slot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.pb-lane {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  padding-top: var(--s1);
+  font-size: var(--t-md);
+  line-height: var(--lh-md);
+}
+.pb-lane b,
+.pb-title b {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pb-empty {
+  padding: var(--s3);
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--muted);
+  text-align: center;
+  border: 1px dashed var(--edge);
+}
+
+/* ---- a card: its session's name and state mark (Mixed), the step's live words or text, the wait, the owner ------------- */
+
+/* Positioned for the session's state edge, the Fleet cards' own (wall.css [data-edge]), in its state's colour (Board.tsx). */
+.pb-card {
+  position: relative;
+  display: block;
+  padding: var(--s2) var(--s3) var(--s2) calc(var(--s3) + var(--s1));
+  color: var(--ink-2);
+  text-decoration: none;
+  background: var(--sheet);
+  border: 1px solid var(--edge);
+}
+.pb-card:hover {
+  border-color: var(--control);
+}
+.pb-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  margin-bottom: var(--s1);
+  color: var(--ink);
+}
+.pb-text {
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  overflow-wrap: anywhere;
+}
+/* The step in progress in ink at 600 and a done step muted, as the plan checklist sets them. */
+.pb-active .pb-text {
+  font-weight: 600;
+  color: var(--ink);
+}
+.pb-done .pb-text {
+  color: var(--muted);
+}
+.pb-wait {
+  display: -webkit-box;
+  margin-top: var(--s1);
+  overflow: hidden;
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.pb-own {
+  margin-top: var(--s1);
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* ---- the empty board: its columns as ever, with one muted line above them saying why ------------------------------------ */
+
+.pb-blank {
+  margin: 0;
+  color: var(--muted);
+}
+
+/* ---- below the five-column width (5 x 140 px and four 8 px gaps): one column at a time, picked by the tabs -------------- */
+
+@container (max-width: 731px) {
+  .pb-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pb-board {
+    flex: none;
+    grid-template-rows: none;
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+  .pb-page .pb-tabs {
+    display: flex;
+  }
+  .pb-col {
+    max-height: none;
+  }
+  .pb-col:not(.on),
+  .pb-col-h {
+    display: none;
+  }
+}

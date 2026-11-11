@@ -1,0 +1,344 @@
+/* The small shared pieces (Chips.tsx, and Squares built on them): the model chip with its effort word and bars and the tag
+   chips, the auto-compact badge, the git line, the context and plan bars, and agent squares. Tokens only (ui/tokens.css).
+   Colour means state: amber only for "needs you", red only for failure; a square is filled by its agent's state. Square: radii
+   0-2 px. */
+
+/* ---- line icons (drawn by ui.css) at these pieces' size --------------------------------------------------------------- */
+
+:is(.chip, .blow, .git) svg.i {
+  width: 12px;
+  height: 12px;
+}
+
+/* ---- chips: a model chip (the harness's logo, the model, its effort) and the tag chips on a card --------------------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 6px;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  line-height: 18px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  border: 1px solid var(--edge);
+  border-radius: var(--r-control);
+}
+/* Where a session runs (SurfaceChip): plain text, so a value shown as sent that is too long ends in "…" (a flex box's own text
+   takes no ellipsis). */
+.chip.surface {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* In a narrow place the model's name gives way; the logo, a generic harness's name and the effort keep their size. */
+.chip-harness {
+  flex: none;
+}
+.chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The effort: its word in the chip's own type, then five bars filled to its level in the level's colour: low orange,
+   medium green, high blue, xhigh purple, max one colour per bar. Codex's scale lands on the same five
+   (Chips.tsx effortLevel). */
+.eff-word {
+  flex: none;
+}
+.eff {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+.eff i {
+  width: 4px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--control);
+}
+.eff i.on {
+  background: var(--c);
+}
+.eff[data-level="1"] {
+  --c: var(--eff-low);
+}
+.eff[data-level="2"] {
+  --c: var(--eff-medium);
+}
+.eff[data-level="3"] {
+  --c: var(--eff-high);
+}
+.eff[data-level="4"] {
+  --c: var(--eff-xhigh);
+}
+.eff[data-level="5"] i:nth-child(1) {
+  --c: var(--eff-r1);
+}
+.eff[data-level="5"] i:nth-child(2) {
+  --c: var(--eff-r2);
+}
+.eff[data-level="5"] i:nth-child(3) {
+  --c: var(--eff-r3);
+}
+.eff[data-level="5"] i:nth-child(4) {
+  --c: var(--eff-r4);
+}
+.eff[data-level="5"] i:nth-child(5) {
+  --c: var(--eff-r5);
+}
+
+/* ---- the auto-compact badge: in ink at any count; a long session compacts as it runs, it is not failing -------------- */
+
+.blow {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--ink);
+  white-space: nowrap;
+  border: 1px solid var(--control);
+  border-radius: var(--r-control);
+}
+.blow svg.i {
+  width: 11px;
+  height: 11px;
+}
+
+/* ---- the git line: branch, worktree, ahead and behind, modified or clean, main checkout ------------------------------- */
+
+.git {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  line-height: 18px;
+  color: var(--ink-2);
+}
+.git > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.git .br {
+  color: var(--ink);
+}
+.git .br-detached {
+  flex: none;
+  color: var(--muted);
+}
+.git .wt {
+  padding: 0 5px;
+  font-family: var(--font-ui);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-control);
+}
+.git .wtn {
+  min-width: 0;
+}
+/* Ahead, behind and the lines changed, as text on one line: one that has no room ends in "…" (each fact goes whole). Lines
+   added are green and lines removed red, as a diff prints them and as the session page's changed files do; the green is mixed
+   toward ink so it reads as text in both themes. */
+.git > .git-facts {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Each fact is the line's height and sits at its top: an inline flex box's baseline is its first item's, an icon's for a fact
+   that has one, so on the shared baseline a fact with an icon would ride higher than one without. */
+.git-facts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  vertical-align: top;
+}
+.git-facts > * + * {
+  margin-left: 12px;
+}
+.git-facts > .lines > .add,
+.fl-cnt > .add {
+  color: color-mix(in srgb, var(--line) 80%, var(--ink));
+}
+.git-facts > .lines > .del,
+.fl-cnt > .del {
+  color: var(--fail);
+}
+
+/* ---- bars: a plan's progress and a context window, at their true ratio ---------------------------------------------- */
+
+.bar {
+  height: 4px;
+  overflow: hidden;
+  background: var(--edge);
+  border-radius: 1px;
+}
+.bar > i {
+  display: block;
+  height: 100%;
+  background: var(--line);
+}
+/* A context window warns as it fills: orange from 75 %, red from 80 %. Orange is the warning colour
+   (stuck, offline, a plan window filling); amber stays "needs you". */
+.bar.ctx.hot > i {
+  background: var(--stuck);
+}
+.bar.ctx.crit > i {
+  background: var(--fail);
+}
+
+/* ---- agent squares: one per agent, filled by its state (--c); a circle for a fork, dashed while queued, grey once done,
+        outlined in red when it failed ------------------------------------------------------------------------------ */
+
+.a {
+  display: inline-block;
+  flex: none;
+  box-sizing: border-box;
+  width: 10px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--c);
+}
+/* Done: greyed toward the done tone, which keeps 3:1 against the card (WCAG 1.4.11). */
+.a.done {
+  background: color-mix(in srgb, var(--c) 40%, var(--done));
+}
+.a.failed {
+  outline: 2px solid var(--fail);
+  outline-offset: -1px;
+}
+.a.queued {
+  background: transparent;
+  border: 1.5px dashed var(--c);
+}
+.a.fork {
+  border-radius: 50%;
+}
+/* A running square pulses with the live marks, on its own compositor layer (ui.css --pulse and --pulse-layer; still when
+   Animation is off, or System and reduced motion). */
+.crew .a.running {
+  animation: var(--pulse);
+  will-change: var(--pulse-layer);
+}
+
+/* The crew: the squares and "+N" past the cap in one box, then the counts in words. */
+.crew {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 20px;
+}
+.crew-sq {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+.crew-more,
+.crew .cnt {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  line-height: 16px;
+  white-space: nowrap;
+}
+.crew-more {
+  margin-left: 3px;
+  color: var(--muted);
+}
+.crew .cnt {
+  margin-left: 6px;
+  color: var(--ink-2);
+}
+
+/* A sparkline (components/Sparkline): the trend beside a figure. */
+.sp {
+  display: block;
+  overflow: visible;
+}
+.sp polyline {
+  fill: none;
+  stroke: var(--ink-2);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.sp .area {
+  fill: var(--edge);
+  stroke: none;
+}
+
+/* A session id to copy (components/SessionId SessionIdCopy), in cards, List rows and History. */
+.id-copy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s1);
+  padding: 0 var(--s1);
+  border: 0;
+  border-radius: var(--r-control);
+  background: none;
+  color: var(--muted);
+  font: 400 var(--t-xs) / var(--lh-xs) var(--font-mono);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.id-copy:hover { background: var(--frame-on); color: var(--ink); }
+.id-copy:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* A machine's plan windows on its group's header (PlanWindows): the percent in ink, orange from 75 %, red from 90 %; the reset
+   muted, in the header's own tone. A stale reading is muted whole, with no warning colour: it is old, not a level. */
+.pw,
+.pw-provider {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.pw {
+  gap: 0 var(--s3);
+}
+.pw-provider {
+  gap: 0 var(--s2);
+}
+.pw-provider > svg.i.logo {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.pw-win {
+  display: inline-flex;
+  gap: var(--s1);
+  white-space: nowrap;
+}
+.pw-pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.pw-pct[data-level="hot"] {
+  font-weight: 600;
+  color: var(--warn-text);
+}
+.pw-pct[data-level="crit"] {
+  font-weight: 600;
+  color: var(--fail);
+}
+.pw-win[data-stale] .pw-pct {
+  color: var(--muted);
+}

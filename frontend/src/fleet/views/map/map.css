@@ -1,0 +1,231 @@
+/* A session's block of lines (SessionBlock), as a List row opens it. Colours and sizes come from ui/tokens.css; the drawing's
+   lengths from MAP in layout.ts. Hollow lines, rings and halos take the ground they sit on: --station-fill where a pane sets
+   it, else the sheet. Line bodies are drawn on the sheet, where every state's body keeps 3:1. */
+
+.map-block {
+  position: relative;
+}
+/* The rows of a List group, positioned, so the rings joining two of its blocks are drawn over them (ZoneRings). */
+.map-across {
+  position: relative;
+}
+.map-lines,
+.map-rings {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.map-rings {
+  z-index: 2;
+}
+.map-rings .mr {
+  pointer-events: auto;
+  cursor: help;
+}
+
+/* Lines: a session's line is the heaviest; an agent's branch lighter; a fork's hollow (a copy of its launcher); a teammate's at
+   a session's weight (a peer). A body is its state's colour at --line-body, mixed into the ground rather than made
+   transparent, so crossing and joining strokes never darken; stations and rings keep the full colour. Live lines are the
+   working colour, ended ones the done grey. */
+.ml {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ml-live {
+  stroke: color-mix(in srgb, var(--line) var(--line-body), var(--station-fill, var(--sheet)));
+}
+.ml-done {
+  stroke: color-mix(in srgb, var(--done) var(--line-body), var(--station-fill, var(--sheet)));
+}
+.ml-trunk,
+.ml-teammate,
+.ml-fork {
+  stroke-width: 4;
+}
+.ml-lane,
+.ml-subagent {
+  stroke-width: 2.5;
+}
+.ml-hollow {
+  fill: none;
+  stroke: var(--station-fill, var(--sheet));
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+/* Interchanges: rings of the ground outlined in ink, at full strength; a message's rings carry a dot. The line joining a mark's
+   rings is faint, and ink while the mark is hovered or one of its stations is hovered, focused or open in the inspector. */
+.mr-link {
+  fill: none;
+  stroke: var(--rule);
+  stroke-width: 1;
+}
+.map-rings .mr:hover .mr-link,
+.mr.is-hot .mr-link {
+  stroke: var(--ink-2);
+}
+.mr-ring {
+  fill: var(--station-fill, var(--sheet));
+  stroke: var(--ink);
+  stroke-width: 2;
+}
+.mr-dot {
+  fill: var(--ink);
+}
+.map-rings .mr:hover .mr-ring {
+  stroke-width: 3;
+}
+/* How many shared files or messages one mark stands for, over its top ring, with a halo of the ground. */
+.mr-count {
+  fill: var(--ink);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--station-fill, var(--sheet));
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+/* One row per station, one flex line that never wraps: the station's control (an agent's shows it in the inspector, the
+   session's opens its page, an asking one opens the answer) holding the lead-in and its mark, then the label's parts, each an
+   item of this one line (a flex item's automatic minimum is its whole content, so a part nested in another item could never
+   give way): the name, the state, its fact, and on the session's row the fold toggle. The state never gives way; the fact
+   gives way first, then the fold toggle's words, then the name, down to 8 characters. The row clips sideways. */
+.map-row {
+  position: absolute;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  overflow-x: clip;
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* The control is the row's lead-in up to the label (its mark sits on the line), and its overlay covers the whole row, so a
+   click anywhere on it is the control's: the standard stretched-link pattern. */
+.map-ctl {
+  display: flex;
+  flex: none;
+  align-items: center;
+  align-self: stretch;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  text-decoration: none;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.map-ctl::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: var(--r-control);
+}
+.map-ctl:hover::after {
+  outline: 1px solid var(--control);
+  outline-offset: -1px;
+}
+/* A focused station's outline is its overlay's, raised over the lines, the rings and the rows below it, for its panel. */
+.map-row .map-ctl:focus-visible {
+  outline: none;
+}
+.map-ctl:focus-visible::after {
+  z-index: 4;
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+/* The agent the inspector shows. */
+.map-row.is-current :is(.map-label-name, .map-label-state, .map-label-cause) {
+  background: var(--selection);
+}
+/* The station's hover text, visually hidden until keyboard focus shows it as a small panel under the label, so a keyboard
+   reaches a station's interchanges with no tab stop per ring. Its left edge is the label's, moved back where a station sits
+   far right so the panel keeps about 40 characters a line. */
+.map-ctl:focus-visible ~ .map-desc {
+  z-index: 4;
+  top: calc(100% - 2px);
+  right: var(--s3);
+  left: min(var(--map-label-x), calc(100% - 280px));
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: var(--s1) var(--s2);
+  overflow: visible;
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--ink);
+  white-space: normal;
+  clip-path: none;
+  background: var(--sheet);
+  border: 1px solid var(--control);
+  border-radius: var(--r-control);
+}
+.map-mark {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+}
+.map-mark svg {
+  display: block;
+}
+.map-ctl:hover .map-mark,
+.map-ctl:focus-visible .map-mark {
+  transform: scale(1.25);
+}
+/* The label's parts. The name ellipsizes down to 8 characters; the state never gives way; the fact takes only the room left,
+   up to its own width, so it gives way first. A dot is text of its own, so no line starts or ends on it. */
+.map-label-name {
+  flex: 0 1 auto;
+  min-width: 8ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.map-label-state {
+  flex: none;
+}
+.map-label-cause {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: max-content;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.map-sep {
+  margin: 0 0.3em;
+  color: var(--muted);
+}
+.map-strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.map-quiet .map-strong {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* "+3 done · 2 failed": the shared button, compact on a row's line, above the station's overlay. Its words give way after the
+   fact and before the name (its shrink weight is far above the name's), down to 5 characters of words. */
+.map-fold.ui-button {
+  position: relative;
+  z-index: 2;
+  flex: 0 100000 auto;
+  min-width: calc(5ch + 2 * var(--s2) + 2px);
+  height: 24px;
+  margin: 0 var(--s3);
+  padding: 0 var(--s2);
+  font-size: var(--t-xs);
+}
+.map-fold-words {
+  min-width: 5ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

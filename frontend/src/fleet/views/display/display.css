@@ -1,0 +1,575 @@
+/* The wall view (display mode). Colours are the tokens' dark side (ui/tokens.css: the view sets
+   data-theme="dark"); the type scale and sizes are the wall's own, all tied to the viewport, so a 1080p and a 2160p screen show
+   one picture. Microsoft's 10-foot guide sets the floor: about 150 % of a desktop's type (main text at least 22.5 px and minor
+   at least 18 px at 1080p), nothing in the outer 5 %, a clear focus outline. Every list region has a fixed height and every row
+   its own (the --wv-h-* sizes, which the layouts read through their Ruler to fit their rows), so nothing moves when data does. */
+
+.wv {
+  /* 1vh on a 16:9 screen (10.8 px at 1080p); a narrower screen is bounded by its width. */
+  --wv-u: min(1vh, 0.5625vw);
+  /* Names and wait clocks (28 px at 1080p); what a session does, headings and figures (23 px); machines and labels (18 px). */
+  --wv-t1: clamp(20px, calc(2.6 * var(--wv-u)), 64px);
+  --wv-t2: clamp(17px, calc(2.1 * var(--wv-u)), 52px);
+  --wv-t3: clamp(14px, calc(1.7 * var(--wv-u)), 42px);
+  --wv-lh1: calc(1.25 * var(--wv-t1));
+  --wv-lh2: calc(1.3 * var(--wv-t2));
+  --wv-lh3: calc(1.35 * var(--wv-t3));
+  --wv-gap: calc(2.4 * var(--wv-u));
+  --wv-col-gap: calc(1.6 * var(--wv-u));
+  --wv-hair: max(1px, calc(0.1 * var(--wv-u)));
+  --wv-w-ctx: calc(3.4 * var(--wv-t2));
+  --wv-w-cost: calc(4.8 * var(--wv-t2));
+  --wv-w-mach: calc(11 * var(--wv-t3));
+  /* Row heights, each one of a Ruler's samples. Columns: an ask, a problem, a session, the gap between its groups. Sections:
+     a tile, a section's head (with the space above it), a main and a minor line. Both: "+N more". */
+  --wv-h-ask: calc(var(--wv-lh1) + var(--wv-lh3) + 2 * var(--wv-u));
+  --wv-h-prob: calc(var(--wv-lh2) + 2 * var(--wv-u));
+  --wv-h-row: calc(var(--wv-lh2) + var(--wv-lh3) + 2 * var(--wv-u));
+  --wv-h-gap: calc(1.6 * var(--wv-u));
+  --wv-h-tile: calc(var(--wv-lh1) + var(--wv-lh2) + var(--wv-lh3) + 3.4 * var(--wv-u));
+  --wv-h-shead: calc(var(--wv-lh2) + 3 * var(--wv-u));
+  --wv-h-main: calc(var(--wv-lh1) + 2 * var(--wv-u));
+  --wv-h-minor: calc(var(--wv-lh2) + 1.4 * var(--wv-u));
+  --wv-h-more: calc(var(--wv-lh3) + 1.2 * var(--wv-u));
+  position: relative;
+  height: 100%;
+  padding: 5vh 5vw;
+  overflow: hidden;
+  font: 400 var(--wv-t2) / var(--wv-lh2) var(--font-ui);
+  color: var(--ink);
+  background: var(--sheet);
+}
+
+/* ---- shared pieces ---------------------------------------------------------------------------------------------------- */
+
+.wv .station {
+  width: 0.95em;
+  height: 0.95em;
+  vertical-align: middle;
+}
+.wv svg.i.logo {
+  width: 0.72em;
+  height: 0.72em;
+  color: var(--ink-2);
+}
+/* A harness with no logo of its own, named beside the generic glyph (Chips HarnessName): its only identifier, so at the minor
+   size, never under. */
+.wv .chip-harness {
+  font-size: var(--wv-t3);
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.wv-ruler {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+}
+.wv-ruler > i {
+  display: block;
+}
+.wv-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wv-room {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wv-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+  min-width: 0;
+  margin: 0;
+  font: 600 var(--wv-t2) / var(--wv-lh2) var(--font-ui);
+  color: var(--ink);
+  white-space: nowrap;
+}
+/* A list's name and count are the desk's (controls ListHead: the count mono, muted at 0), at the heading's size. */
+.wv .ctl-list-h {
+  gap: 0.45em;
+  margin: 0;
+  font: inherit;
+}
+.wv-lbl {
+  font: 400 var(--wv-t3) / var(--wv-lh2) var(--font-ui);
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* An item: one ask, problem or session, the whole of it the link to its session's page. Focus is a band and an ink ring. */
+.wv-item {
+  display: grid;
+  align-content: center;
+  column-gap: var(--wv-col-gap);
+  min-width: 0;
+  padding: 0 var(--wv-u);
+  color: inherit;
+  text-decoration: none;
+  border-bottom: var(--wv-hair) solid var(--rule);
+  outline: none;
+}
+/* The parts shared with the desk carry hover titles a wall has no use for; the pointer meets the
+   link itself, so none of them shows. */
+.wv-item * {
+  pointer-events: none;
+}
+.wv-item:focus-visible {
+  --station-fill: var(--band);
+  background: var(--band);
+  outline: calc(0.3 * var(--wv-u)) solid var(--ink);
+  outline-offset: calc(-0.3 * var(--wv-u));
+}
+/* Cells fall in source order (mark, name, …, figures) on the first line; only a second line is placed, on the second. */
+.wv-item > .station {
+  align-self: center;
+}
+.wv-item b {
+  font-weight: 600;
+  color: var(--ink);
+}
+.wv-item em {
+  font-style: normal;
+}
+.wv-item code {
+  font: 400 0.9em var(--font-mono);
+  color: var(--ink);
+}
+.wv-m {
+  color: var(--muted);
+}
+/* A file two loops edited: the Graph's collision diamond, in ink (Problems' mark). */
+.wv .pb-clash {
+  flex: none;
+  align-self: center;
+  width: 0.95em;
+  height: 0.95em;
+}
+.wv :is([data-tone="failed"] .wv-doing, em[data-tone="failed"]) {
+  color: var(--fail);
+}
+.wv :is([data-tone="stuck"] .wv-doing, em[data-tone="stuck"]) {
+  color: var(--warn-text);
+}
+
+/* A name cut in the middle (ui/MidCut), then the harness's logo. */
+.wv-name,
+.wv-who {
+  display: flex;
+  align-items: center;
+  gap: calc(0.7 * var(--wv-u));
+  min-width: 0;
+  white-space: nowrap;
+}
+.wv-wait {
+  font: 600 var(--wv-t1) / var(--wv-lh1) var(--font-mono);
+  text-align: right;
+  white-space: nowrap;
+}
+.wv-ctx,
+.wv-cost {
+  font-family: var(--font-mono);
+  color: var(--ink-2);
+  text-align: right;
+  white-space: nowrap;
+}
+.wv-ctx[data-level="hot"] {
+  font-weight: 600;
+  color: var(--warn-text);
+}
+.wv-ctx[data-level="crit"] {
+  font-weight: 600;
+  color: var(--fail);
+}
+.wv-l2 {
+  grid-row: 2;
+  font: 400 var(--wv-t3) / var(--wv-lh3) var(--font-ui);
+  color: var(--ink-2);
+}
+.wv-more {
+  height: var(--wv-h-more);
+  padding: var(--wv-u) var(--wv-u) 0;
+  font: 500 var(--wv-t3) / var(--wv-lh3) var(--font-ui);
+  color: var(--ink-2);
+}
+
+/* The est. spend and plan windows (orange from 75 %, red from 90 %, limits.ts), the stream's word and the time. */
+.wv-figs,
+.wv-end {
+  display: flex;
+  align-items: center;
+  gap: var(--wv-gap);
+  min-width: 0;
+  white-space: nowrap;
+}
+.wv-figs {
+  overflow: hidden;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+/* The est. spend's figure (StateBar SpendToday's .sb-spend), set in ink at 600 here only. */
+.wv .sb-spend {
+  font-weight: 600;
+  color: var(--ink);
+}
+.wv-win {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+}
+.wv-win[data-level="hot"] {
+  font-weight: 600;
+  color: var(--warn-text);
+}
+.wv-win[data-level="crit"] {
+  font-weight: 600;
+  color: var(--fail);
+}
+.wv-reset {
+  font-size: var(--wv-t3);
+  font-weight: 400;
+  color: var(--muted);
+}
+.wv-end {
+  flex: none;
+}
+.wv-clock {
+  font-family: var(--font-mono);
+  color: var(--ink);
+}
+.wv-stream {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  color: var(--ink-2);
+}
+.wv-stream[data-lost] {
+  font-weight: 600;
+  color: var(--fail);
+}
+
+/* ---- Columns: Needs you over Problems on the left, the other sessions on the right, a strip at the foot ----------------- */
+
+.wv-b {
+  display: grid;
+  grid-template:
+    "left right" minmax(0, 1fr)
+    "strip strip" auto
+    / minmax(0, 11fr) minmax(0, 9fr);
+  row-gap: calc(1.2 * var(--wv-u));
+  height: 100%;
+}
+.wv-b-left,
+.wv-b-right {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.wv-b-left {
+  grid-area: left;
+  padding-right: var(--wv-gap);
+}
+.wv-b-right {
+  grid-area: right;
+  padding-left: var(--wv-gap);
+  border-left: var(--wv-hair) solid var(--rule);
+}
+/* At least its line: where the type stops at its floor (a short or narrow screen) and 4.2 units are less, a fixed height would
+   push the heading up into the outer 5 %. */
+.wv-b .wv-head {
+  flex: none;
+  align-items: flex-end;
+  min-height: calc(4.2 * var(--wv-u));
+  padding: 0 var(--wv-u) var(--wv-u);
+  border-bottom: var(--wv-hair) solid var(--rule);
+}
+.wv-b-needs {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+}
+.wv-b-needs > .wv-room,
+.wv-b-right > .wv-room {
+  flex: 1 1 0;
+}
+/* Problems holds its heading and three lines at every count, so a problem arriving never moves Needs you. */
+.wv-b-problems {
+  flex: none;
+  margin-top: var(--wv-gap);
+}
+.wv-b-problems > .wv-room {
+  height: calc(3 * var(--wv-h-prob));
+}
+.wv-b-right > .wv-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--wv-w-ctx) var(--wv-w-cost);
+  column-gap: var(--wv-col-gap);
+}
+.wv-counts {
+  display: flex;
+  gap: var(--wv-gap);
+  min-width: 0;
+}
+.wv-group + .wv-group {
+  margin-top: var(--wv-h-gap);
+}
+
+.wv-b-ask {
+  grid-template-columns: 1em minmax(0, 1fr) auto;
+  grid-template-rows: var(--wv-lh1) var(--wv-lh3);
+  height: var(--wv-h-ask);
+  font-size: var(--wv-t1);
+}
+.wv-b-ask .wv-who {
+  font: 600 var(--wv-t1) / var(--wv-lh1) var(--font-ui);
+}
+.wv-b-ask > .wv-l2 {
+  grid-column: 2 / 4;
+}
+.wv-b-prob {
+  grid-template-columns: 1em minmax(0, 1fr);
+  height: var(--wv-h-prob);
+  color: var(--ink-2);
+}
+.wv-b-row {
+  grid-template-columns: 1em minmax(0, 1fr) var(--wv-w-ctx) var(--wv-w-cost);
+  grid-template-rows: var(--wv-lh2) var(--wv-lh3);
+  height: var(--wv-h-row);
+}
+.wv-b-row .wv-name {
+  font-weight: 500;
+}
+.wv-b-row > .wv-l2 {
+  grid-column: 2 / 5;
+}
+
+.wv-b-strip {
+  grid-area: strip;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wv-gap);
+  padding: calc(1.2 * var(--wv-u)) var(--wv-u) 0;
+  border-top: var(--wv-hair) solid var(--rule);
+}
+/* "Esc or w exits" while an item has focus: arrows were pressed, so the keys are what is in hand. */
+.wv-hint {
+  visibility: hidden;
+  font-size: var(--wv-t3);
+  color: var(--muted);
+}
+.wv:has(.wv-item:focus-visible) .wv-hint {
+  visibility: visible;
+}
+
+/* ---- Sections: Needs you as tiles, then the sections on one grid, a foot with the machines ----------------------------- */
+
+.wv-c {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.wv-c-top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wv-gap);
+  margin-bottom: var(--wv-u);
+}
+/* Two rows of tiles, held from the first ask while any remains, so asks coming and going never move the sections; with none,
+   no rows at all (Sections). */
+.wv-tiles {
+  display: grid;
+  flex: none;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: var(--wv-h-tile);
+  gap: var(--wv-u) calc(1.6 * var(--wv-u));
+  height: calc(2 * var(--wv-h-tile) + var(--wv-u));
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+}
+.wv-tiles > li {
+  min-width: 0;
+}
+/* The needs-you card's look: the sheet, an edge outline and the card's own state edge (views/wall/wall.css [data-edge]), at the
+   wall's size: the outline the wall's hairline, so the edge sits over it by that much, and wider. */
+.wv-tile {
+  position: relative;
+  align-content: center;
+  row-gap: calc(0.3 * var(--wv-u));
+  height: 100%;
+  padding: 0 calc(1.6 * var(--wv-u)) 0 calc(2.2 * var(--wv-u));
+  background: var(--sheet);
+  border: var(--wv-hair) solid var(--edge);
+}
+.wv-tile[data-edge]::before {
+  top: calc(-1 * var(--wv-hair));
+  bottom: calc(-1 * var(--wv-hair));
+  left: calc(-1 * var(--wv-hair));
+  width: calc(0.6 * var(--wv-u));
+}
+.wv-tile-1 {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  min-width: 0;
+  font: 600 var(--wv-t1) / var(--wv-lh1) var(--font-ui);
+}
+.wv-tile-1 .wv-wait {
+  flex: none;
+  margin-left: auto;
+  padding-left: 0.6em;
+}
+.wv-tile-2 {
+  font: 400 var(--wv-t2) / var(--wv-lh2) var(--font-ui);
+  color: var(--ink-2);
+}
+.wv-tile-3 {
+  overflow: hidden;
+  font: 400 var(--wv-t3) / var(--wv-lh3) var(--font-ui);
+  color: var(--muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.wv-tile-more {
+  display: flex;
+  align-items: center;
+  padding: 0 calc(2.2 * var(--wv-u));
+  color: var(--ink-2);
+  border: var(--wv-hair) solid var(--edge);
+}
+
+.wv-c-sections {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+/* One grid for every section's lines, so names, machines and figures line up across them. */
+.wv-shead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--wv-w-ctx) var(--wv-w-cost);
+  column-gap: var(--wv-col-gap);
+  align-items: end;
+  height: var(--wv-h-shead);
+  padding: 0 var(--wv-u) calc(0.6 * var(--wv-u));
+  border-bottom: var(--wv-hair) solid var(--rule);
+}
+.wv-c-row {
+  grid-template-columns: 1em minmax(0, 1.2fr) var(--wv-w-mach) minmax(0, 1fr) var(--wv-w-ctx) var(--wv-w-cost);
+  align-items: center;
+  height: var(--wv-h-main);
+}
+.wv-c-row .wv-name {
+  font: 600 var(--wv-t1) / var(--wv-lh1) var(--font-ui);
+}
+.wv-mach,
+.wv-doing {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.wv-mach {
+  font-size: var(--wv-t3);
+  color: var(--muted);
+}
+.wv-doing {
+  color: var(--ink-2);
+}
+/* Idle a step quieter: the wall leads with what waits, what is wrong and what works. */
+.wv-c-row[data-minor] {
+  height: var(--wv-h-minor);
+}
+.wv-c-row[data-minor] .wv-name {
+  font: 500 var(--wv-t2) / var(--wv-lh2) var(--font-ui);
+  color: var(--ink-2);
+}
+.wv-c-row[data-minor] :is(.wv-doing, .wv-mach, .wv-ctx, .wv-cost) {
+  font-size: var(--wv-t3);
+}
+.wv-c-row[data-minor] .wv-doing {
+  color: var(--muted);
+}
+
+.wv-c-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wv-gap);
+  margin-top: var(--wv-u);
+  font: 400 var(--wv-t3) / var(--wv-lh3) var(--font-ui);
+}
+/* The machines take what the stream and the time leave, which never shrink: one line of text that ends in "…" where they do not
+   fit (Sections Machines). */
+.wv-machines {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.wv-machine + .wv-machine {
+  margin-left: calc(2 * var(--wv-u));
+}
+.wv-machine > .station,
+.wv-machine b {
+  margin-right: 0.4em;
+}
+.wv-machine b {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.wv-machine:is([data-state="silent"], [data-state="restart"]) {
+  color: var(--warn-text);
+}
+
+/* ---- the lost stream: a banner across the middle, over everything it can no longer vouch for, dimmed ----------------- */
+
+.wv-status {
+  position: absolute;
+  inset: 5vh 5vw;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+.wv-lost {
+  --station-fill: var(--band);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--wv-gap);
+  align-items: center;
+  width: 100%;
+  padding: calc(3 * var(--wv-u)) calc(4 * var(--wv-u));
+  background: var(--band);
+  outline: calc(0.3 * var(--wv-u)) solid var(--fail);
+  outline-offset: calc(-0.3 * var(--wv-u));
+}
+.wv-lost > .station {
+  grid-row: 1 / 3;
+  width: calc(2.2 * var(--wv-t1));
+  height: calc(2.2 * var(--wv-t1));
+}
+.wv-lost-t {
+  margin: 0;
+  font: 600 calc(1.3 * var(--wv-t1)) / 1.2 var(--font-ui);
+}
+.wv-lost-s {
+  margin: 0;
+  color: var(--ink-2);
+}
+.wv[data-lost] .wv-data {
+  opacity: 0.4;
+}
+.wv[data-lost] .station-working {
+  animation: none;
+}

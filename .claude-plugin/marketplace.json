@@ -1,0 +1,12 @@
+{
+  "name": "sitrep",
+  "description": "The SITREP reporter for Claude Code, installed from this repository.",
+  "owner": { "name": "Iluvatar Labs" },
+  "plugins": [
+    {
+      "name": "sitrep-reporter",
+      "source": "./mod/claude-reporter",
+      "description": "Reports this machine's Claude Code sessions to the SITREP server."
+    }
+  ]
+}

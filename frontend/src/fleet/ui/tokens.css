@@ -1,0 +1,140 @@
+/* Every colour, size and space the console reads, in one place; components and views read these names, never a literal.
+
+   One neutral palette: dark on :root, light under data-theme="light". index.html sets data-theme (the mode a
+   light, dark or System choice comes to) before the first paint, and useTheme keeps it.
+
+   Surfaces: --frame is the chrome (sidebar, top bar), --sheet the content (main view, inspector, panels, controls), --band one
+   tone step (hover, a header band), --code a code block. Lines: --rule separates, --edge outlines a box, --control outlines a
+   control. --frame-on and --selection mark the current and the picked row.
+
+   State, on data only: --line working, --held needs you (amber; --on-held draws its outline and bars), --idle,
+   --stuck (stuck and offline; orange is the warning colour, --warn-text its text grade), --fail failed (also its text),
+   --done done (never text). A line body is its state colour mixed
+   --line-body into the ground under it: color-mix(in srgb, var(--line) var(--line-body), var(--sheet)).
+
+   Contrast, the lowest over --frame, --sheet and --band (WCAG 2.2), dark / light: --ink 14.8 / 16.4, --ink-2 10.4 / 10.2,
+   --muted 6.6 / 6.1, --control 3.4 / 3.0, state marks 5.3 / 3.3 and up, --fail as text 5.8 / 5.0, line bodies on --sheet
+   3.9 / 3.8 and up. Light amber is 1.8 alone, so its mark carries an ink outline (9.4 on the amber); a colour bar or line body
+   carries none. Light state colours are the most vivid of their hue (highest OKLCH chroma) that
+   keep 3:1, and --fail 4.5:1 (it is text), on every ground they are drawn on, the darkest being the open sidebar row
+   (--frame-on over --frame, #e4e4e4): working 3.0, stuck 3.0, failed 4.5, idle 4.5, done 4.2 there. Light line bodies are
+   full strength, 3.3 and up on --frame and --band too.
+
+   An element marked data-theme="dark" takes the dark side whatever the page's (the wall view, always dark). */
+
+:root,
+[data-theme="dark"] {
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Type at 110 %, each size with its line height; --t-clock is a wait clock. */
+  --t-xs: 13px;
+  --lh-xs: 18px;
+  --t-sm: 14px;
+  --lh-sm: 20px;
+  --t-md: 15px;
+  --lh-md: 22px;
+  --t-lg: 18px;
+  --lh-lg: 24px;
+  --t-clock: 18px;
+  --lh-clock: 22px;
+
+  /* The 4-pt spacing scale. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --gap: 8px;
+
+  --r-control: 2px;
+  --r-sheet: 0;
+  --line-body: 75%;
+
+  --frame: #0b0b0b;
+  --frame-on: rgba(255, 255, 255, 0.08);
+  --sheet: #161616;
+  --band: #212121;
+  --code: #212121;
+  --ink: #f5f5f5;
+  --ink-2: #d0d0d0;
+  --muted: #a6a6a6;
+  --rule: rgba(255, 255, 255, 0.1);
+  --edge: #3a3a3a;
+  --control: #737373;
+  --selection: rgba(255, 255, 255, 0.06);
+  --line: #22c55e;
+  --held: #fbbf24;
+  --on-held: #0b0b0b;
+  --idle: #8a94aa;
+  --stuck: #fb923c;
+  --fail: #f87171;
+  --done: #9a9a9a;
+  /* The warning colour as text (a plan window from 75 %, the Machines badge): --stuck where it reads at 4.5:1. */
+  --warn-text: #fb923c;
+  /* Model families: the spend-by-model bars (views/machines/Today.tsx). */
+  --opus: #9085e9;
+  --sonnet: #3987e5;
+  --haiku: #199e70;
+  --fable: #d95926;
+  --openai: #df6aa8;
+  --other: #898781;
+  /* Effort, low to max: a level's own colour; max runs through all five. */
+  --eff-low: #f58b57;
+  --eff-medium: #91c882;
+  --eff-high: #5aa9f5;
+  --eff-xhigh: #af87ff;
+  --eff-r1: #eb5f57;
+  --eff-r2: #f58b57;
+  --eff-r3: #fac35f;
+  --eff-r4: #91c882;
+  --eff-r5: #82aadc;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --frame: #efefef;
+  --frame-on: rgba(17, 17, 17, 0.05);
+  --sheet: #ffffff;
+  --band: #f0f0f0;
+  --code: #f0f0f0;
+  --ink: #111111;
+  --ink-2: #383838;
+  --muted: #595959;
+  --rule: rgba(17, 17, 17, 0.1);
+  --edge: #c7c7c7;
+  --control: #8a8a8a;
+  --selection: rgba(17, 17, 17, 0.05);
+  --line: #009741;
+  --held: #f2a900;
+  --on-held: #111111;
+  --idle: #0052ff;
+  --stuck: #e35200;
+  --fail: #cf0013;
+  --done: #6b6b6b;
+  --line-body: 100%;
+  --warn-text: #a63c00;
+  --opus: #6250d6;
+  --sonnet: #2a78d6;
+  --haiku: #12895f;
+  --fable: #eb6834;
+  --openai: #b8407d;
+  --other: #6b6a64;
+  --eff-low: #d9601f;
+  --eff-medium: #2f8f3a;
+  --eff-high: #1f78c8;
+  --eff-xhigh: #7a3fe0;
+  --eff-r1: #c9302c;
+  --eff-r2: #d9601f;
+  --eff-r3: #c99a0a;
+  --eff-r4: #2f8f3a;
+  --eff-r5: #4a6fd0;
+  color-scheme: light;
+}
+
+html {
+  background: var(--frame);
+  color: var(--ink);
+  font: 400 var(--t-sm) / var(--lh-sm) var(--font-ui);
+}

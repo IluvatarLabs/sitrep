@@ -1,0 +1,29 @@
+{
+  "name": "sitrep",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "server",
+    "frontend",
+    "codex-reporter",
+    "hermes-reporter"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,frontend -c blue,green \"npm run dev -w server\" \"npm run dev -w frontend\"",
+    "build": "npm run build -w frontend && npm run build -w server && npm run build -w codex-reporter && npm run build -w hermes-reporter",
+    "test": "npm run test -w server",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w frontend && npm run typecheck -w codex-reporter && npm run typecheck -w hermes-reporter && tsc -p scripts/tsconfig.json --noEmit && bash mod/claude-reporter/typecheck.sh",
+    "lint": "eslint .",
+    "check:protocol": "cmp server/src/fleet/protocol.ts mod/claude-reporter/hooks/protocol.ts"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6",
+    "eslint": "^10.13.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.0"
+  }
+}

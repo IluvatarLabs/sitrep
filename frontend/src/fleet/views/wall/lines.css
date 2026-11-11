@@ -1,0 +1,74 @@
+/* The parts a card and a List row both draw (Lines.tsx). Tokens only (ui/tokens.css). `fl-line` is one flex line that never
+   wraps, and each part is an item of it with its minimum at 0 (a flex item's automatic minimum is its whole content, so a part
+   could never give way): on a short line the delegates' names give way first, then the facts, then the step, then the state.
+   Flex shares a line's overflow by weight, so every part loses something, and a loss of 0.05 px is enough to end its text in
+   "…" ("Working · 2 agents stu…" with the names still showing): each weight is a million times the next, so a part's share
+   rounds to nothing while a part below it still has room. A session id to copy (components/SessionId) ends the line and never
+   gives way. */
+
+.fl-line {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  white-space: nowrap;
+}
+.fl-said,
+.fl-step {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fl-said {
+  flex: 0 1 auto;
+}
+.fl-step {
+  flex: 0 1e6 auto;
+}
+/* The next step, inferred from the plan's first pending one: muted. */
+.fl-step.is-next {
+  color: var(--muted);
+}
+.fl-names {
+  display: flex;
+  flex: 0 1e18 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+.fl-facts {
+  display: flex;
+  flex: 0 1e12 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* Delegates' descriptions are prose: cut at the end with "…", never in the middle. */
+.fl-cut {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Hooks off and a reporter out of range leave the session's figures blind: in ink, not muted, so they are seen. */
+.fl-facts [data-warn] {
+  color: var(--ink);
+}
+/* A dot before each part after the first, as ui/Dots draws one; assistive tech reads nothing for it. */
+.fl-line > :is(.fl-names, .fl-step, .fl-facts):not(:first-child)::before {
+  content: "·";
+  content: "·" / "";
+  flex: none;
+  margin: 0 0.3em;
+  color: var(--muted);
+}
+.fl-line > .id-copy {
+  margin-inline-start: auto;
+}
+.fl-line > :has(+ .id-copy) {
+  margin-inline-end: var(--s2);
+}
+/* The line clips sideways, so a focused id's outline is drawn inside it. */
+.fl-line > .id-copy:focus-visible {
+  outline-offset: -2px;
+}

@@ -1,0 +1,353 @@
+/* The Fleet's Cards layout. Tokens only (ui/tokens.css). A card is square and flat (a 1 px edge, no shadow), its rows on five
+   row tracks of its grid, seven with Details (subgrid), so a row takes the height of the tallest of its grid row and every row
+   lines up across the cards beside it. Five groups read apart by one 12 px step: who, where, what it is doing, its agents, its
+   figures; inside a group the lines touch. Every row keeps its height whatever the data does, so a card never changes height on screen. A left edge
+   in the state's colour marks a card that needs you, is stuck or failed, and in stuck's orange one whose agent runs stuck;
+   auto-compacts never mark a card. The parts a card shares with a List row are in lines.css. */
+
+.wc-area {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s3);
+}
+.wc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
+  gap: var(--s3);
+  padding-top: var(--s2);
+}
+.wc-area.has-cols .wc-grid {
+  grid-template-columns: repeat(var(--wc-cols), minmax(0, 1fr));
+}
+.wc-grid[hidden] {
+  display: none;
+}
+
+/* The card spans its row tracks and lays its rows on them; its own row gap is 0, so the grid's gap goes between cards only (a
+   track left empty would still take that gap, so a row Details alone draws is not there without it). Its one column is bounded:
+   an auto column would grow to a row's longest unbroken line and paint past the frame. */
+.wc {
+  position: relative;
+  display: grid;
+  grid-row: span 5;
+  grid-template-rows: subgrid;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 0;
+  min-width: 0;
+  background: var(--band);
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sheet);
+}
+.wc :is(a, button):focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.wc[data-details] {
+  grid-row: span 7;
+}
+.wc.is-pinned {
+  border-color: var(--control);
+}
+/* Nobody attached: dashed, on the frame's ground. */
+.wc.is-detached {
+  background: transparent;
+  border-style: dashed;
+}
+/* The state edge, over a box's own 1 px left edge, meeting its body with no line between them: any positioned box with
+   data-edge, a Fleet card or a wall view tile (views/display). A colour bar has no outline on any side; the needs-you mark
+   keeps its own ink ring. */
+[data-edge]::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: -1px;
+  width: var(--s1);
+  background: var(--wc-edge);
+}
+[data-edge="needs-you"] {
+  --wc-edge: var(--held);
+}
+[data-edge="stuck"] {
+  --wc-edge: var(--stuck);
+}
+[data-edge="failed"] {
+  --wc-edge: var(--fail);
+}
+
+/* 1: the mark, the name, the pin, the model. */
+.wc-who {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  padding: var(--s3) var(--s3) 0;
+}
+.wc-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--t-md);
+  font-weight: 600;
+  line-height: var(--lh-md);
+  white-space: nowrap;
+}
+.wc-name a {
+  color: var(--ink);
+  text-decoration: none;
+}
+/* The whole card opens its session (WallCard openCard), so it takes a link's pointer and hovering it underlines the name. The
+   name is cut in the middle (ui/MidCut), its parts in an inline flex box a link's underline does not reach: the parts carry
+   it. */
+.wc {
+  cursor: pointer;
+}
+.wc:hover .wc-name a,
+.wc:hover .wc-name a .ui-midcut > span {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* Row 1 gives way in this order: the model's name first, to 5 characters (the logo, a generic harness's name, the effort word and
+   bars never), then the session's name, cut in the middle (MidCut keeps its last 8); the chip's weight is a million times the
+   name's. The chip's minimum is its content's (min-width: auto), with the model's name counted at 5ch: it breaks anywhere and is
+   clamped to one line with "…", because a nowrap text's min-content is all of it, which would make the chip's minimum its whole
+   width (the automatic-minimum trap). */
+.wc-who > .chip {
+  flex: 0 1e6 auto;
+  min-width: auto;
+}
+.wc-who > .chip > .chip-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  min-width: 5ch;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* 2: separate lines, each ending inside the card and cut only within itself. The machine and the path: the path gives way
+   first, cut from the front so its last folders stay; the machine name ends in "…" with its whole name in the title. The git
+   line: the branch gives way first, cut in the middle (ui/MidCut) down to "…" and its last eight characters (a detached commit
+   is never cut); then the worktree tag, its whole path in its title; git's facts and the lines changed last, ending in "…"
+   (chips.css). Each weight is a million times the next, as in lines.css, so a part is not cut while one before it has room. The session id, on its
+   own line, its mark in line with the text above. Under them, only with Details and when there are any, the notes and
+   relations, muted, on one line that ends in "…" (lines.css). */
+.wc-where {
+  display: grid;
+  grid-auto-rows: 20px;
+  align-content: start;
+  align-items: center;
+  min-width: 0;
+  padding: var(--s1) var(--s3) 0;
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--muted);
+}
+.wc-where-line {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.wc-machine {
+  flex: 0 1 auto;
+  min-width: 4ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-2);
+}
+.wc-path {
+  flex: 0 1e6 auto;
+  min-width: 8ch;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-align: left;
+  text-overflow: ellipsis;
+  direction: rtl;
+}
+/* Where it runs (a tag chip) gives way after the path; a listed label is short and keeps its size. */
+.wc-where-line > .surface {
+  flex: 0 1 auto;
+}
+.wc-where > .git {
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.wc-where > .git > .br {
+  flex: 0 1e12 auto;
+  min-width: auto;
+}
+.wc-where > .git > .br:has(.ui-midcut-tail) {
+  min-width: calc(10ch + 16px);
+}
+.wc-where > .git > :is(.wt, .git-facts) {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+.wc-where > .git > .wt {
+  flex-shrink: 1e6;
+}
+.wc-where > .git .wtn {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The session id, drawn as the git line above it draws its parts (no padding, a 12 px icon, its mark under the branch's), so
+   the whole id fits on the narrowest card (12 + 4 + 36 × 7.8 px against 294 px, running at most 4 px into the card's right
+   padding); where a browser's figures are wider it ends in "…", the copy and its title carrying the whole id. */
+.wc-where > .id-copy {
+  display: flex;
+  width: fit-content;
+  max-width: calc(100% + var(--s1));
+  padding: 0;
+}
+.wc-where > .id-copy > svg.i {
+  width: 12px;
+  height: 12px;
+}
+.wc-where > .id-copy > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 3: what it is doing in one line with the plan's progress, or with Details its parts (lines.css); Answer in a compact
+   button, in the height the row always keeps. */
+.wc-doing {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  /* A height, not a min-height: on a subgrid row Firefox adds the grid's 12 px gap on top of a min-height (Chromium does not). */
+  height: 24px;
+  padding: var(--s3) var(--s3) 0;
+  box-sizing: content-box;
+}
+.wc-doing .ui-button {
+  flex: none;
+  height: 24px;
+  padding: 0 var(--s2);
+}
+.wc-doing-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* With Details, one more line: the plan step and the notes and relations (lines.css), then the plan's progress at its end. */
+.wc-more {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  height: var(--lh-sm);
+  padding: 0 var(--s3);
+  color: var(--ink-2);
+}
+.wc-more-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+/* The step and the notes give way together here, by their lengths: the notes carry the warnings (hooks off, a reporter out of
+   range, nobody attached), so a long step must not push them off the line, as lines.css's order would. */
+.wc-more-text > :is(.fl-step, .fl-facts) {
+  flex-shrink: 1;
+}
+.wc-plan {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: auto;
+  font: 400 var(--t-xs) / var(--lh-xs) var(--font-mono);
+  color: var(--ink-2);
+}
+.wc-plan > .bar {
+  width: 48px;
+}
+
+/* 4: the agents' counts in words and the squares under them. The row is the counts' line and two lines of 10 px squares, what
+   WallCard's cap draws on the narrowest card, so it is the same height for no agents and for fifty: the room two lines hold and
+   one does not use falls under them. */
+.wc-crew {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 16px 23px;
+  row-gap: 3px;
+  min-width: 0;
+  padding: var(--s3) var(--s3) 0;
+}
+/* The squares' box and the words are the row's own grid items. */
+.wc-crew > .crew {
+  display: contents;
+}
+/* The box reaches 1 px past its cell on every side, padded back by as much, so a failed square's red outline (1 px outside
+   the square) is never cut at its edges while the squares keep their place. */
+.wc-crew .crew-sq {
+  grid-area: 2 / 1 / 3 / -1;
+  align-content: flex-start;
+  margin: -1px;
+  padding: 1px;
+  overflow: hidden;
+}
+/* "+N" takes a square's line height, so a line holding it is as tall as the others. */
+.wc-crew .crew-more {
+  line-height: 10px;
+}
+.wc-crew .crew .cnt {
+  grid-area: 1 / 1;
+  min-width: 0;
+  margin-left: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* With Details, under the squares: output tokens per minute over the last 30 minutes across the card, the current rate at its end. A
+   height, not a min-height (Firefox and subgrid, as .wc-doing). The line is the sparkline's (chips.css), stretched to the row. */
+.wc-rate {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-width: 0;
+  height: 24px;
+  padding: var(--s1) var(--s3) 0;
+  color: var(--ink-2);
+}
+.wc-rate > .sp {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.wc-rate-now {
+  flex: none;
+  font: 400 var(--t-xs) / var(--lh-xs) var(--font-mono);
+}
+
+/* 5: context, est. cost, time. */
+/* The bar's line is kept while the context is not yet known (no bar is drawn then: an empty one would read as 0 %). */
+.wc-figs {
+  display: grid;
+  grid-template-rows: 4px auto;
+  gap: var(--s1);
+  padding: var(--s3);
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+.wc-figs .blow {
+  margin-left: var(--s1);
+}
+/* The figures' line is the auto-compact badge's height whether or not a session has compacted yet, so its first compact
+   never grows the card. */
+.wc-figs > .ui-dots {
+  grid-row: 2;
+  min-height: 20px;
+  white-space: nowrap;
+}

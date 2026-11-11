@@ -1,0 +1,62 @@
+/* History: the heading row with the day and its steps, the day's ended sessions as a table, its pager, a row's delete
+   confirmation, and the way back from a stored session's page. Tokens only (ui/tokens.css); .sv-link, .sv-mono, .sv-n and
+   .sv-field come from session/session.css, which the session page imports. */
+
+/* The view is the containing block of anything positioned inside it, so nothing escapes the pane. */
+.hs { position: relative; min-width: 0; padding: var(--s4); }
+.hs :is(h1, p) { margin: 0; }
+/* History, ‹ Today ›, the day, and the day's count at the far end, centred on the controls' line. */
+.hs > .ui-view-head { align-items: center; margin-bottom: var(--s3); }
+.hs-nav { display: flex; align-items: center; gap: var(--s1); }
+.hs-count { margin-left: auto; }
+/* The day, a button that opens the date field's picker; the field itself lies unseen under it, so the picker opens there. */
+.hs-pick { position: relative; display: inline-flex; margin-left: var(--s2); }
+.hs-pick > .ui-button { font-variant-numeric: tabular-nums; }
+.hs-pick-field { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; pointer-events: none; }
+.hs-back { margin-bottom: var(--s3); font-size: var(--t-sm); }
+
+/* The day's table in its own frame. Every column but Session has a fixed width (616 px, 704 with Delete), and Session (the
+   name over its project) takes the rest: 200 px at the table's minimum (136 px with Delete, so the table fits signed in beside
+   both panes at 1440 px, 888 px less the view's padding), up to 420 px; past that End reason takes the rest instead, so a wide
+   pane leaves no dead gap after the names. Below the minimum the frame scrolls sideways inside itself, the Session column
+   staying in place (separate borders keep each cell's rule on it as it sticks). Every line keeps to one line, cut with an
+   ellipsis and said whole on hover. */
+.hs-scroll { container: hs / inline-size; position: relative; max-width: 100%; overflow-x: auto; }
+.hs-table { width: 100%; min-width: 816px; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: var(--t-sm); line-height: var(--lh-sm); }
+.hs-table.hs-can-delete { min-width: 840px; }
+.hs-table th, .hs-table td { overflow: hidden; padding: var(--s1) var(--s2); border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; white-space: nowrap; }
+.hs-table tr > :first-child { position: sticky; left: 0; z-index: 1; background: var(--sheet); }
+.hs-w-model { width: 136px; }
+.hs-w-ended { width: 56px; }
+.hs-w-dur { width: 72px; }
+.hs-w-cost { width: 72px; }
+.hs-w-blow { width: 104px; }
+.hs-w-agents { width: 64px; }
+.hs-w-end { width: 112px; }
+.hs-w-act { width: 88px; }
+/* The fixed columns and a 420 px Session. */
+@container hs (min-width: 1036px) {
+  .hs-table:not(.hs-can-delete) .hs-w-session { width: 420px; }
+  .hs-table:not(.hs-can-delete) .hs-w-end { width: auto; }
+}
+@container hs (min-width: 1124px) {
+  .hs-can-delete .hs-w-session { width: 420px; }
+  .hs-can-delete .hs-w-end { width: auto; }
+}
+.hs-table thead th { color: var(--muted); font-size: var(--t-xs); font-weight: 400; line-height: var(--lh-xs); }
+.hs-table tbody th { font-weight: 400; }
+.hs-table .sv-n { text-align: right; }
+.hs-table tbody tr:hover > * { background: var(--band); }
+.hs-cut { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A session's name reads as a link on hover only, so the column is not a wall of underlines. */
+.hs-table .hs-name { display: block; max-width: 100%; font-weight: 600; text-align: left; text-decoration: none; }
+.hs-table .hs-name:hover { text-decoration: underline; text-decoration-color: var(--ink); }
+/* The project, cut from the front, then the session id to copy (components/SessionId), which keeps its size. */
+.hs-sub { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+.hs-proj { display: block; flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--muted); direction: rtl; text-align: left; text-overflow: ellipsis; }
+.hs-why { display: block; }
+.hs-table .hs-lin { display: block; max-width: 100%; color: var(--ink-2); font-size: var(--t-xs); }
+.hs-table .hs-act { vertical-align: middle; text-align: right; }
+/* A delete's confirmation, in a full-width row under its session. */
+.hs-table .hs-confirm > td { padding: var(--s2) var(--s4); white-space: normal; }
+.hs-confirm > td > * + * { margin-left: var(--s2); }

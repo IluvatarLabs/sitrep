@@ -1,0 +1,657 @@
+/* The session styles: the session page (its head, facts, plan, and the Timeline or agent tree beside the files), and
+   the pieces other views and the inspector reuse (the activity feed, the agent and main-loop detail, the plan checklist, the
+   files, the failure and auto-compact notes, the small chart). Every colour, size, font and space is a token (ui/tokens.css):
+   spaces on the 4-pt scale, line heights with their type size, radii --r-control at most, one 1 px rule or one tone step
+   between parts. Pixel figures left are hairlines, focus rings, icon and drawing sizes, and layout tracks. */
+
+/* ---- shared helpers ------------------------------------------------------------------------------------------------- */
+
+.sv-num { font-variant-numeric: tabular-nums; }
+/* A figure's cell: right-aligned, its digits tabular; a heading over it keeps its own letters. */
+.sv-n { text-align: right; }
+td.sv-n { font-variant-numeric: tabular-nums; }
+.sv-mono { font-family: var(--font-mono); font-size: var(--t-xs); }
+.sv-muted { color: var(--muted); }
+.sv-ic { flex: none; vertical-align: -2px; }
+
+:where(.sv-page, .ag-tree, .fd, .hs, .sv-ask) .station-word { white-space: nowrap; }
+:where(.sv-page, .ag-tree, .hs, .fb) .station { vertical-align: middle; }
+
+.sv-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--control);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.sv-link:hover { text-decoration-color: var(--ink); }
+.sv-link.bad { color: var(--fail); text-decoration-color: currentColor; }
+
+:where(.sv-page, .ag-tree, .fd, .pl, .fl-list, .hs, .rd-btns, .rd-body, .sv-ask, .bx) :is(button, a, select, input, [tabindex]):focus-visible,
+.sv-link:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.sv-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--muted);
+  font-size: var(--t-sm);
+}
+
+.sv-code {
+  margin: 0;
+  padding: var(--s1) var(--s2);
+  border-radius: var(--r-control);
+  background: var(--code);
+  color: var(--ink);
+  font: var(--t-xs) / var(--lh-xs) var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A section's heading: its name, and any count or control after it. */
+.sv-sh {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 32px;
+  margin: var(--s4) 0 var(--s2);
+}
+.sv-sh :is(h2, h3) { margin: 0; font-size: var(--t-sm); line-height: var(--lh-sm); font-weight: 600; }
+.sv-sh .sv-muted { font-size: var(--t-xs); }
+
+.sv-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s2);
+  font-size: var(--t-xs);
+}
+.sv-more > :first-child { margin-right: auto; }
+
+.sv-notice {
+  margin: var(--s2) 0 0;
+  padding: var(--s1) var(--s2);
+  background: var(--band);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+}
+.sv-coll { list-style: none; }
+
+/* Inline, so a one-line list can cut inside it like any words. */
+.sv-git { color: var(--ink-2); }
+.sv-git .sv-ic { margin-right: var(--s1); }
+
+/* The context meter: a thin track at the true ratio, the percent and its level's words, and the auto-compact badge. The
+   track is green, orange from 75 % and red from 80 %; the percent and its words stay in ink and take weight from 75 %. The
+   pieces wrap in a narrow cell. */
+.sv-ctx { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 var(--s1); }
+.sv-ctx > * { white-space: nowrap; }
+.sv-ctx:is(.hot, .crit) .sv-ctx-v { font-weight: 600; }
+.sv-track {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 4px;
+  background: var(--rule);
+  overflow: hidden;
+}
+.sv-ctx.wide .sv-track { width: 80px; }
+.sv-track i { position: absolute; inset: 0 auto 0 0; background: var(--line); }
+.sv-ctx.hot .sv-track i { background: var(--stuck); }
+.sv-ctx.crit .sv-track i { background: var(--fail); }
+
+/* ---- the session page ----------------------------------------------------------------------------------------------- */
+
+.sv-page { position: relative; min-width: 0; padding: var(--s4); font-size: var(--t-sm); line-height: var(--lh-sm); }
+.sv-page h1, .sv-page h2, .sv-page h3, .sv-page h4, .sv-page p { margin: 0; }
+
+/* The head, two lines: the state mark, the name (cut, and said whole on hover) with Rename, and the state line; then the
+   machine, the model, the directory (right to left, so a long path loses its front and keeps the folders that name it), the
+   repository and git line, and the copy controls at the end. */
+.sv-head { display: grid; gap: var(--s1); min-width: 0; }
+.sv-l1,
+.sv-l2 { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; }
+.sv-l1 { gap: var(--s1) var(--s2); }
+.sv-l2 { gap: var(--s1) var(--s3); color: var(--ink-2); }
+.sv-name { min-width: 0; max-width: 100%; overflow: hidden; font-size: var(--t-lg); font-weight: 600; line-height: var(--lh-lg); text-overflow: ellipsis; white-space: nowrap; }
+.sv-state { min-width: 0; color: var(--ink-2); font-size: var(--t-md); line-height: var(--lh-md); overflow-wrap: anywhere; }
+.sv-state.failed { color: var(--fail); }
+.sv-machine { display: inline-flex; align-items: center; gap: var(--s1); min-width: 0; white-space: nowrap; }
+.sv-path { flex: 0 1 auto; min-width: 0; overflow: hidden; direction: rtl; font-family: var(--font-mono); font-size: var(--t-xs); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+/* The repository and git line: one line that takes the room left before the copy controls and ends in "…" (said whole on
+   hover), so it wraps to a line of its own only below 12em. */
+.sv-gitline { flex: 1 1 12em; min-width: 0; font-size: var(--t-xs); line-height: var(--lh-xs); }
+.sv-copies { display: inline-flex; margin-left: auto; }
+.sv-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  height: 32px;
+  padding: 0 var(--s2);
+  border: 0;
+  border-radius: var(--r-control);
+  background: none;
+  color: var(--ink-2);
+  font: 500 var(--t-xs) / var(--lh-xs) var(--font-ui);
+  cursor: pointer;
+}
+.sv-copy:hover { background: var(--frame-on); color: var(--ink); }
+.sv-copy:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.sv-copy svg { color: var(--muted); }
+/* Rename: the name as a field, Save and Cancel, and why it was refused. */
+.sv-rename { display: flex; flex: 1 1 320px; flex-wrap: wrap; align-items: center; gap: var(--s2); min-width: 0; }
+.sv-rename input {
+  flex: 1 1 200px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 var(--s2);
+  border: 1px solid var(--control);
+  border-radius: var(--r-control);
+  background: var(--sheet);
+  color: var(--ink);
+  font: 600 var(--t-md) / var(--lh-md) var(--font-ui);
+}
+.sv-rename input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.sv-rename-err { flex-basis: 100%; color: var(--fail); font-size: var(--t-sm); }
+
+/* What the session asks of its owner. */
+.sv-ask {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: var(--s1) var(--s3);
+  align-items: start;
+  margin-top: var(--s3);
+  padding: var(--s3);
+  border: 1px solid var(--edge);
+}
+.sv-ask > .station { margin-top: 3px; }
+.sv-ask h2 { font-size: var(--t-md); font-weight: 600; line-height: var(--lh-md); }
+.sv-ask p { font-size: var(--t-sm); }
+.sv-ask-acts { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s2); }
+.sv-ask-acts:empty { display: none; }
+/* The wait clock: the console's one clock size, in mono, as the other wait clocks. */
+.sv-clock { font: 600 var(--t-clock) / var(--lh-clock) var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* The facts, two rows on fixed tracks (Limits takes two), each free to shrink below its value so the rows never outgrow the
+   pane; the 1 px gap shows the rule colour as hairlines. A value keeps to one line and is cut with an ellipsis (its words on
+   hover); Agents and Limits wrap between their items instead. */
+.sv-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) repeat(4, minmax(0, 1fr)) minmax(0, 1.4fr);
+  gap: 1px;
+  margin-top: var(--s3);
+  border: 1px solid var(--rule);
+  background: var(--rule);
+}
+.sv-fact { display: flex; flex-direction: column; min-width: 0; padding: var(--s1) var(--s3); background: var(--sheet); }
+.sv-fk { min-width: 0; overflow: hidden; color: var(--muted); font-size: var(--t-xs); line-height: var(--lh-xs); text-overflow: ellipsis; white-space: nowrap; }
+.sv-fv { display: flex; align-items: center; gap: var(--s2); min-width: 0; overflow: hidden; font-size: var(--t-sm); font-weight: 600; line-height: var(--lh-sm); white-space: nowrap; }
+.sv-fv > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sv-fv > :is(svg, .blow, button) { flex: none; }
+.sv-fnum .sv-fv { font-family: var(--font-mono); font-size: var(--t-xs); }
+.sv-fsoft { color: var(--muted); font-weight: 400; }
+.sv-fwrap .sv-fv { flex-wrap: wrap; gap: 0 var(--s3); overflow: visible; }
+.sv-fwrap .sv-link { font-weight: 600; }
+.sv-fwrap .sv-link svg { width: 12px; height: 12px; }
+/* The Context cell's auto-compacts: the badge, a button that opens which loops it hit; "⟲0" or "⟲—" when there are none or
+   its reporter cannot tell. */
+.sv-fbadge { display: inline-flex; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.sv-fbadge:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.sv-fv > .sv-fcompacts { display: inline-flex; flex: none; align-items: center; gap: 2px; overflow: visible; font-size: var(--t-xs); }
+.sv-fcompacts svg.i { width: 11px; height: 11px; }
+/* Limits: each window's share, then its reset in the soft tone. */
+.sv-flimits { grid-column: span 2; }
+.sv-flims { display: flex; flex-wrap: wrap; gap: 0 var(--s3); min-width: 0; }
+.sv-limw { display: inline-flex; gap: var(--s1); min-width: 0; max-width: 100%; white-space: nowrap; }
+.sv-lim { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sv-lim.hot { color: var(--warn-text); font-weight: 600; }
+.sv-lim.crit { color: var(--fail); font-weight: 600; }
+/* A stale reading (limits.ts): muted, no warning colour; it is old, not a level. */
+.sv-lim.stale { color: var(--muted); }
+.sv-limw > .sv-fsoft { overflow: hidden; text-overflow: ellipsis; }
+/* A trend: the reading (an "Ns ago" under the pointer gives way first), then its chart filling the rest of the cell, in the
+   sparkline's look (components/chips.css .sp); auto-compacts are dashed rules, the pointer's second a solid one. */
+.sv-fv > .sv-trend-v { flex: 0 1 auto; }
+.sv-fv > svg.sv-trend { flex: 1 0 48px; width: 48px; height: var(--lh-sm); }
+.sv-trend-mark { stroke: var(--ink); stroke-width: 1; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; }
+.sv-trend-cross { stroke: var(--ink); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.sv-facts + .bx { margin: var(--s2) 0 0; }
+
+.sv-planbox { margin-top: var(--s4); }
+
+/* The body: Timeline or Agents, beside the files (300 px, or a 32 px rail when folded); while the files are not reported, as
+   wide as its heading and "—"; without changed files the body is one column. */
+.sv-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  align-items: start;
+  gap: var(--s4);
+  margin-top: var(--s4);
+}
+.sv-body.folded { grid-template-columns: minmax(0, 1fr) 32px; }
+.sv-body.unknown { grid-template-columns: minmax(0, 1fr) auto; }
+.sv-body.alone { grid-template-columns: minmax(0, 1fr); }
+.sv-main { min-width: 0; }
+.sv-side { min-width: 0; padding-left: var(--s4); border-left: 1px solid var(--rule); }
+.sv-side > .sv-sh:first-child { margin-top: 0; }
+.sv-fold { margin-left: auto; }
+.sv-fold svg { transform: rotate(-90deg); }
+.sv-body.folded .sv-side { padding-left: 0; border-left: 0; }
+.sv-side-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s2);
+  width: 32px;
+  min-height: 160px;
+  padding: var(--s2) 0;
+  border: 1px solid var(--rule);
+  background: var(--band);
+  color: var(--muted);
+  font: 600 var(--t-xs) / 1 var(--font-ui);
+  cursor: pointer;
+}
+.sv-side-rail svg { transform: rotate(90deg); }
+.sv-side-rail span { writing-mode: vertical-rl; }
+.sv-side-rail:hover { color: var(--ink); }
+.sv-side-rail:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* The message box, held at the foot of the page while it scrolls. Where it cannot be used, its note is quiet, as it shows on
+   every such session; signed out, it is the one line to sign in. */
+.sv-compose {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  margin-top: var(--s5);
+  padding: var(--s3) 0 var(--s1);
+  border-top: 1px solid var(--rule);
+  background: var(--sheet);
+}
+.sv-compose .compose-off b { color: var(--muted); font-weight: 400; }
+.sv-compose .answer-section { padding: 0; }
+
+/* ---- the Timeline --------------------------------------------------------------------------------------------------- */
+
+/* One toolbar row over the Timeline or the agent tree: the Timeline ⇄ Agents switch, the view's controls (zoom out, zoom in,
+   Fit, Now; how the drawing moves is their title), and the order among siblings. */
+.sv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); min-height: 32px; margin-bottom: var(--s2); }
+.sv-bar > * { flex: none; }
+.sv-order { margin-left: auto; }
+.sv-tl-view { display: flex; align-items: center; gap: var(--s1); }
+.sv-tl-view .ui-button { min-width: 32px; }
+
+/* The loops down the left (their names fixed while the plot pans), the plot on the right. */
+.sv-tl { --tl-label: clamp(200px, 22%, 320px); display: grid; grid-template-columns: var(--tl-label) minmax(0, 1fr); border-block: 1px solid var(--rule); }
+.sv-tl-labels { min-width: 0; border-right: 1px solid var(--rule); }
+.sv-tl-lhead {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding: 0 var(--s2);
+  border-bottom: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: var(--t-xs);
+}
+.sv-tl-rows { margin: 0; padding: 0; list-style: none; }
+/* A row is the drawing's pitch (Timeline.tsx PITCH, 36 px): two lines of --lh-xs. */
+.sv-tl-row {
+  display: grid;
+  align-content: center;
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--s2);
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: var(--t-xs) / var(--lh-xs) var(--font-ui);
+  text-align: left;
+}
+button.sv-tl-row { cursor: pointer; }
+/* A row a pick brings into view keeps the sticky message box's height clear below it (--sv-foot-h, set by the page). */
+.sv-tl-row, .ag-row { scroll-margin-block-end: calc(var(--sv-foot-h, 0px) + var(--s2)); }
+button.sv-tl-row:hover { background: var(--band); }
+.sv-tl-row[aria-current="true"] { background: var(--frame-on); }
+.sv-tl-row.flash { background: var(--selection); }
+.sv-tl-row:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+/* A row's name, then its kind when the kind fits whole: a kind with no room wraps to a second line the row never shows, so a
+   cut name ends in its own ellipsis and never in a fragment of the kind. */
+.sv-tl-name { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--s1); min-width: 0; height: var(--lh-xs); overflow: hidden; font-size: var(--t-sm); }
+.sv-tl-name b { flex: 0 1 auto; min-width: 0; overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.sv-tl-row.main .sv-tl-name b { font-weight: 600; }
+.sv-tl-name em { flex: none; color: var(--muted); font-size: var(--t-xs); font-style: normal; white-space: nowrap; }
+.sv-tl-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--s1); min-width: 0; color: var(--ink-2); }
+.sv-tl-meta .station { width: 12px; height: 12px; }
+.sv-tl-meta .station-word { gap: var(--s1); min-width: 0; overflow: hidden; }
+.sv-tl-meta .sv-num { flex: none; color: var(--muted); }
+
+.sv-tl-plot { min-width: 0; overflow: hidden; }
+.sv-plot { display: block; overflow: hidden; cursor: grab; user-select: none; -webkit-user-select: none; }
+.sv-plot:active { cursor: grabbing; }
+.sv-grid { stroke: var(--rule); stroke-width: 1; pointer-events: none; }
+.sv-axis-rule { stroke: var(--rule); stroke-width: 1; pointer-events: none; }
+.sv-tick { fill: var(--muted); font: var(--t-xs) var(--font-mono); dominant-baseline: middle; pointer-events: none; }
+/* A row's band: a picked or marked row shows across the plot as in its label; an agent's band opens it. */
+.sv-band { fill: transparent; }
+.sv-band.opens:hover { fill: var(--band); }
+.sv-band.on { fill: var(--frame-on); }
+.sv-band.flash { fill: var(--selection); }
+/* A line body: its state's colour (--tone: working; stuck, needs you, idle or failed as its mark; grey once ended) mixed
+   --line-body into the sheet under it, mixed rather than see-through so a branch over its parent's line never darkens. The
+   marks stay full strength. No line takes an outline; the needs-you mark keeps its own ink ring. */
+.sv-line { --tone: var(--line); fill: none; stroke: color-mix(in srgb, var(--tone) var(--line-body), var(--station-fill, var(--sheet))); stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.sv-line.stuck { --tone: var(--stuck); }
+.sv-line.held { --tone: var(--held); }
+.sv-line.idle { --tone: var(--idle); }
+.sv-line.fail { --tone: var(--fail); }
+.sv-line.fin { --tone: var(--done); }
+.sv-line.queued { stroke-dasharray: 4 6; }
+.sv-end { pointer-events: none; }
+.sv-mk.opens { cursor: pointer; }
+/* An interchange's link: one faint hairline from its ring to the other loop's line, raised while a row at either end is
+   hovered, focused or picked, or the mark itself is hovered, so the links never outweigh the lanes they cross. */
+.sv-join { fill: none; stroke: var(--rule); stroke-width: 1; }
+.sv-join.is-hot, .sv-mk:hover .sv-join { stroke: var(--ink-2); }
+/* How many marks one mark stands for, over that mark on its own row, cut clear of the lines it crosses. */
+.sv-mk-n {
+  fill: var(--ink);
+  font: 600 var(--t-xs) var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  paint-order: stroke;
+  stroke: var(--sheet);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.sv-now { stroke: var(--ink-2); stroke-width: 1; stroke-dasharray: 3 3; pointer-events: none; }
+
+/* The legend, on its own row under the toolbar and over the drawing, so it is read with the first screen of it however long
+   the drawing runs. */
+.sv-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s3);
+  margin: 0 0 var(--s2);
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+}
+.sv-legend li { display: inline-flex; align-items: center; gap: var(--s1); white-space: nowrap; }
+.sv-legend svg { flex: none; overflow: visible; }
+.sv-legend-n { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.sv-evlist { margin: 0; padding: 0; list-style: none; }
+.sv-ev {
+  display: grid;
+  grid-template-columns: 64px minmax(80px, 160px) minmax(0, 1fr);
+  gap: var(--s2);
+  align-items: baseline;
+  width: 100%;
+  padding: var(--s1) var(--s2);
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: none;
+  color: var(--ink);
+  font: var(--t-sm) / var(--lh-sm) var(--font-ui);
+  text-align: left;
+}
+button.sv-ev { cursor: pointer; }
+button.sv-ev:hover { background: var(--band); }
+.sv-ev time { color: var(--muted); font-size: var(--t-xs); }
+.sv-evloop { overflow: hidden; color: var(--ink-2); text-overflow: ellipsis; white-space: nowrap; }
+.sv-evtext { min-width: 0; overflow-wrap: anywhere; }
+.sv-evlist .bad .sv-evtext { color: var(--fail); }
+
+/* ---- the agent tree table ------------------------------------------------------------------------------------------- */
+
+/* Its own frame scrolls sideways; positioned, so hidden text stays inside it. */
+.ag-scroll { position: relative; overflow-x: auto; }
+.ag-row {
+  display: grid;
+  grid-template-columns: minmax(calc(210px + var(--deep, 0) * 16px), 2.6fr) minmax(88px, 1fr) minmax(52px, 0.6fr) minmax(120px, 1.1fr) minmax(60px, 0.7fr) minmax(60px, 0.7fr) minmax(64px, 0.7fr) minmax(110px, 1.1fr);
+  gap: var(--s2);
+  align-items: center;
+  width: 100%;
+  min-width: calc(860px + var(--deep, 0) * 16px);
+  min-height: 36px;
+  padding: 0 var(--s2);
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  background: none;
+  color: var(--ink);
+  font: var(--t-sm) / var(--lh-sm) var(--font-ui);
+  text-align: left;
+}
+button.ag-row { cursor: pointer; }
+button.ag-row:hover { background: var(--band); }
+.ag-row[aria-current="true"] { background: var(--frame-on); }
+.ag-row.flash { background: var(--selection); }
+.ag-row:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.ag-hd { min-height: 32px; color: var(--muted); font-size: var(--t-xs); }
+.ag-hd button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.ag-hd button[aria-pressed="true"] { color: var(--ink); font-weight: 600; }
+.ag-hd .ag-n button { justify-content: flex-end; }
+.ag-root { background: var(--band); }
+.ag-root .ag-tx b { font-weight: 600; }
+.ag-task { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+.ag-tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-tx b { font-weight: 500; }
+.ag-tx em { margin-left: var(--s1); color: var(--muted); font-size: var(--t-xs); font-style: normal; }
+.ag-tx .ag-err { color: var(--fail); }
+.ag-c { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-n { text-align: right; }
+.ag-row:not(.ag-hd) .ag-n { font-variant-numeric: tabular-nums; }
+/* The tree's guides, one 16 px column a level, drawn on its middle. */
+.ag-indent { display: inline-flex; flex: none; align-self: stretch; }
+.ag-indent s { position: relative; display: block; width: 16px; }
+.ag-indent s::before,
+.ag-indent s::after { content: ""; position: absolute; background: var(--control); }
+.ag-indent .pass::before,
+.ag-indent .tee::before { left: 7px; top: 0; bottom: 0; width: 1px; }
+.ag-indent .elbow::before { left: 7px; top: 0; height: 50%; width: 1px; }
+.ag-indent .tee::after,
+.ag-indent .elbow::after { left: 7px; top: 50%; width: 9px; height: 1px; }
+
+/* ---- agent and main-loop detail (the inspector's pane, 300 px by default) --------------------------------------------- */
+
+.ag-facts {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: var(--s1) var(--s3);
+  margin: var(--s3) 0 0;
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+}
+.ag-facts dt { color: var(--muted); font-size: var(--t-xs); }
+.ag-facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.ag-part { margin-top: var(--s4); }
+.ag-part h4, .fd-lab { margin: 0 0 var(--s1); font-size: var(--t-sm); font-weight: 600; line-height: var(--lh-sm); }
+.ag-tools { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); margin: 0; padding: 0; list-style: none; font-size: var(--t-sm); }
+.ag-tools .sv-num { color: var(--muted); }
+.ag-tools .latest .sv-mono { font-weight: 600; }
+.ag-last { color: var(--muted); font-size: var(--t-xs); }
+.ag-kids { margin: 0; padding: 0; list-style: none; font-size: var(--t-sm); line-height: var(--lh-md); }
+.ag-note { margin: var(--s4) 0 0; color: var(--muted); font-size: var(--t-xs); line-height: var(--lh-xs); }
+.ag-note.warn { margin: 0 0 var(--s2); padding: var(--s1) var(--s2); background: var(--band); color: var(--ink); font-size: var(--t-sm); line-height: var(--lh-sm); }
+
+/* An agent's failure. */
+.fb { margin: 0 0 var(--s3); padding: var(--s3); background: var(--band); }
+.fb-head { display: flex; align-items: center; gap: var(--s2); }
+.fb-head b { color: var(--fail); font-size: var(--t-sm); font-weight: 600; }
+.fb-head time { margin-left: auto; font-size: var(--t-xs); }
+.fb-part h5 { margin: var(--s2) 0 var(--s1); color: var(--muted); font-size: var(--t-xs); font-weight: 500; }
+.fb-part .sv-code { background: var(--sheet); }
+.fb-bad { color: var(--fail); }
+.fb-evid { margin: 0; padding-left: var(--s4); font-size: var(--t-sm); }
+.fb-after { margin: var(--s2) 0 0; font-size: var(--t-sm); }
+
+/* Auto-compacts: an agent's (BlowoutBox), or the session's opened from its Context fact (BlowoutCallout). In ink at any count:
+   a long session compacts as it runs, it is not failing. */
+.bx { margin: 0 0 var(--s3); padding: var(--s3); background: var(--band); font-size: var(--t-sm); line-height: var(--lh-sm); }
+.bx p { margin: var(--s1) 0 0; }
+.bx .bx-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--s2); margin: 0; }
+.bx-log, .bx-hits { margin: var(--s1) 0 0; padding: 0; list-style: none; }
+.bx-log li { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--s2); }
+.bx-log time { color: var(--muted); }
+/* The session's log of every auto-compact: when, which loop, and what happened. */
+.sv-blowlog { margin: var(--s2) 0 0; padding: 0; list-style: none; }
+.sv-blowlog li { display: grid; grid-template-columns: max-content minmax(0, 200px) minmax(0, 1fr); gap: var(--s2); align-items: baseline; padding: var(--s1) 0; border-top: 1px solid var(--rule); }
+.sv-blowlog time { color: var(--muted); font-size: var(--t-xs); }
+.sv-blowloop { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The task prompt and final answer: two buttons, and the text raised in the modal panel. */
+.rd-btns { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.rd-btn {
+  display: grid;
+  flex: 1 1 140px;
+  align-items: center;
+  min-width: 0;
+  padding: var(--s1) var(--s3);
+  border: 1px solid var(--control);
+  border-radius: var(--r-control);
+  background: var(--sheet);
+  color: var(--ink);
+  font: var(--t-sm) / var(--lh-sm) var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.rd-btn:hover:not(:disabled) { background: var(--band); }
+.rd-btn:disabled { color: var(--muted); cursor: default; }
+.rd-t { font-weight: 500; }
+.rd-m { color: var(--muted); font-size: var(--t-xs); }
+.rd-panel { --panel-w: 720px; }
+.rd-tools { display: flex; justify-content: flex-end; padding: var(--s2) var(--s4) 0; }
+.rd-body { padding: var(--s2) var(--s4) var(--s4); }
+.rd-body:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.rd-note { margin-top: var(--s3); color: var(--muted); font-size: var(--t-xs); }
+
+/* Markdown set as reading text. */
+.sv-md { max-width: 72ch; font-size: var(--t-sm); line-height: var(--lh-sm); }
+.sv-md > * { margin: 0 0 var(--s2); }
+.sv-md :is(h1, h2, h3, h4, h5, h6) { margin: var(--s4) 0 var(--s1); font-size: var(--t-md); font-weight: 600; line-height: var(--lh-md); }
+.sv-md :is(ul, ol) { padding-left: var(--s5); }
+.sv-md blockquote { padding-left: var(--s3); border-left: 1px solid var(--edge); color: var(--ink-2); }
+.sv-md code { padding: 0 var(--s1); border-radius: var(--r-control); background: var(--code); font: var(--t-xs) var(--font-mono); }
+.sv-md pre { padding: var(--s2) var(--s3); border-radius: var(--r-control); background: var(--code); overflow-x: auto; }
+.sv-md pre code { padding: 0; background: none; }
+.sv-md a { color: var(--ink); text-underline-offset: 3px; }
+
+/* ---- the live activity feed ----------------------------------------------------------------------------------------- */
+
+.fd { margin-top: var(--s4); }
+.fd-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); }
+.fd-head .fd-lab { margin: 0 auto 0 0; }
+.fd-off { margin: 0; padding: var(--s2) var(--s3); background: var(--band); color: var(--ink-2); font-size: var(--t-sm); line-height: var(--lh-sm); }
+.fd-wrap { position: relative; margin-top: var(--s2); }
+/* An empty feed's one line, lined up with the rows above it rather than indented. */
+.fd .ui-empty { margin-top: var(--s1); padding: 0; }
+.fd-list {
+  max-height: 360px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--rule);
+  overflow: auto;
+  overflow-anchor: none;
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+}
+.fd-list:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.fd-list > li,
+.fd-runlist > li { display: grid; grid-template-columns: 40px 12px minmax(0, 1fr); gap: var(--s2); align-items: start; padding: var(--s1) var(--s2); border-bottom: 1px solid var(--rule); }
+.fd-list.hours > li,
+.fd-list.hours .fd-runlist > li { grid-template-columns: 56px 12px minmax(0, 1fr); }
+.fd-list > li:last-child { border-bottom: 0; }
+.fd-list > li.new { background: var(--band); }
+.fd-at { color: var(--muted); font-size: var(--t-xs); font-variant-numeric: tabular-nums; }
+.fd-k { display: inline-flex; padding-top: 3px; color: var(--muted); }
+.fd-body { min-width: 0; overflow-wrap: anywhere; }
+.fd-name { font: 500 var(--t-xs) / var(--lh-sm) var(--font-mono); }
+.fd-arg { color: var(--ink-2); font: var(--t-xs) / var(--lh-sm) var(--font-mono); }
+.fd-who { font-weight: 500; }
+.fd-q, .fd-cut, .fd-nofull { color: var(--muted); font-size: var(--t-xs); }
+.fd-nofull { display: block; }
+.fd-red { padding: 0 var(--s1); border-radius: var(--r-control); background: var(--code); color: var(--muted); }
+.fd-tgl { display: inline; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.fd-chev { width: var(--s3); height: var(--s3); margin-right: var(--s1); }
+.fd-tgl[aria-expanded="true"] .fd-chev { transform: rotate(90deg); }
+.fd-can { cursor: pointer; }
+.fd-state { margin-left: var(--s2); color: var(--muted); font-size: var(--t-xs); }
+.fd-exit { display: inline-flex; align-items: center; gap: var(--s1); }
+.fd-exit.ok { color: var(--line); }
+.fd-exit.bad { color: var(--fail); }
+.fd-xp { margin-top: var(--s2); cursor: auto; }
+.fd-xh { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); margin-bottom: var(--s1); color: var(--muted); font-size: var(--t-xs); }
+.fd-cmd { max-height: 240px; overflow: auto; }
+.fd-mark { color: var(--muted); }
+.fd-xf { margin-top: var(--s2); }
+.fd-runlist { margin: var(--s1) 0 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.fd-runlist > li { padding-left: 0; padding-right: 0; }
+.fd-jump { position: absolute; right: var(--s3); bottom: var(--s2); }
+.fd-foot { display: flex; justify-content: space-between; gap: var(--s3); margin-top: var(--s1); color: var(--muted); font-size: var(--t-xs); }
+.fd-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fd-when { white-space: nowrap; }
+/* Expanded in the modal panel: the same feed, as tall as the window allows. */
+.fd-panel { --panel-w: 720px; }
+.fd-panel .ui-panel-body { padding: var(--s3) var(--s4) var(--s4); }
+.fd-panel .fd-list { max-height: calc(100vh - 170px); }
+
+/* ---- the plan checklist and the files ------------------------------------------------------------------------------- */
+
+/* Codex's own form: the step in progress bold with the working mark, a done step struck through and dimmed, a pending one a
+   box; its owner and how long on the right. */
+.pl-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); margin-bottom: var(--s1); }
+.pl-head h3 { margin: 0; font-size: var(--t-sm); font-weight: 600; line-height: var(--lh-sm); }
+.pl-prog { color: var(--muted); font-size: var(--t-xs); }
+.pl-steps { margin: 0; padding: 0; list-style: none; }
+.pl-step { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: var(--s2); align-items: start; padding: var(--s1) 0; border-bottom: 1px solid var(--rule); font-size: var(--t-sm); line-height: var(--lh-sm); }
+.pl-mk { display: inline-flex; padding-top: 3px; }
+.pl-box { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+.pl-tx { min-width: 0; overflow-wrap: anywhere; }
+.pl-step.active .pl-tx { font-weight: 600; }
+.pl-step.pending .pl-tx { color: var(--ink-2); }
+.pl-step.done .pl-tx { color: var(--muted); text-decoration: line-through; }
+/* With no step in progress, the first pending one is marked as the inferred next. */
+.pl-next { margin-left: var(--s2); color: var(--muted); font-size: var(--t-xs); white-space: nowrap; }
+.pl-ow { display: inline-flex; gap: var(--s2); min-width: 0; color: var(--muted); font-size: var(--t-xs); white-space: nowrap; }
+.pl-who { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; }
+
+.fl-sum { margin: 0 0 var(--s2); font-size: var(--t-sm); }
+.fl-list { margin: 0; padding: 0; list-style: none; }
+.fl-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: var(--s2); align-items: center; padding: var(--s1) 0; border-bottom: 1px solid var(--rule); font-size: var(--t-sm); }
+.fl-st { color: var(--muted); text-align: center; }
+.fl-fn { display: flex; flex-direction: column; min-width: 0; }
+.fl-fn b { font-weight: 500; overflow-wrap: anywhere; }
+.fl-fn i { overflow: hidden; color: var(--muted); font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.fl-df { display: inline-flex; align-items: center; gap: var(--s2); }
+.fl-cnt { display: inline-flex; gap: var(--s1); font-size: var(--t-xs); }
+.fl-bars { display: inline-flex; gap: 2px; }
+.fl-bars i { width: var(--s1); height: var(--s3); background: var(--rule); }
+.fl-bars i.add { background: var(--line); }
+.fl-bars i.del { background: var(--fail); }

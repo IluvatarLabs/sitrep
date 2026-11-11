@@ -1,0 +1,838 @@
+/* The frame around every view: the sidebar (full height, on the frame), the top bar over the main view and the
+   inspector, the lost-connection strip over the main view, the main view and the inspector on the sheet, flush, 1 px rules
+   between; the drag handles; the passing notice, the sign-in popover and display mode. Views pad and title themselves; the
+   main pane only holds them and scrolls. Desktop only: designed at 1440 px and checked at 1920. Where three cards no longer
+   fit beside both panes (under 1668 px, usePanes; a small window, or a zoomed one) the inspector folds by itself, so at 1440
+   it starts folded (sidebar 252 + main 1188), and the frame is the window's width, never wider, so nothing at its right is
+   cut off. Tokens only (ui/tokens.css): spaces on the 4-pt scale, controls 32 px, the top bar 48, sidebar rows 30. */
+
+/* The page itself never scrolls: each pane scrolls inside the frame, so nothing can move the window. */
+html,
+body {
+  margin: 0;
+  overflow: clip;
+}
+body {
+  background: var(--frame);
+}
+body.shell-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+body.shell-resizing * {
+  cursor: col-resize !important;
+}
+
+.shell {
+  /* The lost-connection strip's height: what sits at the main view's top steps below it while it shows. */
+  --strip-h: 32px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: clip;
+  font: 400 var(--t-sm) / var(--lh-sm) var(--font-ui);
+  color: var(--ink);
+  background: var(--frame);
+  -webkit-font-smoothing: antialiased;
+}
+.shell *,
+.shell *::before,
+.shell *::after {
+  box-sizing: border-box;
+}
+.shell :is(.shell-rail, .shell-top, .shell-pane, .shell-display-bar) :focus-visible,
+.shell-pop :focus-visible,
+.shell-show-top:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.shell-chev-left {
+  transform: rotate(90deg);
+}
+.shell-chev-right {
+  transform: rotate(-90deg);
+}
+
+/* The passing notice, over everything. */
+.shell-notice {
+  position: fixed;
+  bottom: var(--s4);
+  left: 50%;
+  z-index: 40;
+  max-width: 560px;
+  padding: var(--s2) var(--s3);
+  color: var(--sheet);
+  background: var(--ink);
+  border-radius: var(--r-control);
+  transform: translateX(-50%);
+}
+.shell-notice[hidden] {
+  display: none;
+}
+
+/* ---- the grid: --rail-w, --pane-w and --top-h come from the frame's style (0 for a folded pane, and in display mode) -- */
+
+/* The strip's row is as tall as the strip, and nothing while the stream is live. */
+.shell-frame {
+  --top-h-base: 48px;
+  position: relative;
+  flex: 1;
+  display: grid;
+  grid-template-rows: [top] var(--top-h) [strip] auto [body] minmax(0, 1fr) [end];
+  grid-template-columns: [rail] var(--rail-w) [main] minmax(0, 1fr) [pane] var(--pane-w) [end];
+  min-height: 0;
+}
+.shell-rail {
+  grid-row: top / end;
+  grid-column: rail;
+}
+.shell-top {
+  grid-row: top;
+  grid-column: main / end;
+}
+.shell-strip-slot {
+  grid-row: strip;
+  grid-column: main;
+  min-width: 0;
+}
+.shell-sheet {
+  grid-row: body;
+  grid-column: main;
+}
+.shell-pane {
+  grid-row: strip / end;
+  grid-column: pane;
+}
+/* Display mode: the wall view (views/display) over the whole window (the top row is 0 then; before the first snapshot the
+   strip, when it shows, is the first thing), its layout switch and Exit in the corner, outside the wall's safe area, hidden
+   with the cursor once idle. */
+.shell.is-idle,
+.shell.is-idle * {
+  cursor: none;
+}
+.shell-display-bar {
+  position: fixed;
+  top: var(--s2);
+  right: var(--s4);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.shell.is-idle .shell-display-bar {
+  opacity: 0;
+}
+/* While the strip shows, the controls at the main view's top right sit below it. */
+.shell.is-lost :is(.shell-display-bar, .shell-show-top) {
+  top: calc(var(--strip-h) + var(--s2));
+}
+
+/* The lost-connection strip: one line, never folded away (role="status" on its slot, so it is announced). */
+.shell-strip {
+  --station-fill: var(--band);
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  height: var(--strip-h);
+  padding: 0 var(--s4);
+  color: var(--ink);
+  background: var(--band);
+  border-bottom: 1px solid var(--rule);
+}
+.shell-strip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shell-strip-text b {
+  font-weight: 600;
+}
+
+/* The drag handles: 9 px wide, centred on the rule they move; a 2 px line shows on hover, focus and while dragging. */
+.shell-rz {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 5;
+  width: 9px;
+  margin-left: -4px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.shell-rz::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--s1);
+  width: 2px;
+}
+.shell-rz:is(:hover, :focus-visible, .drag)::after {
+  background: var(--ink-2);
+}
+.shell-rz:focus-visible {
+  outline: 0;
+}
+.shell-rz-rail {
+  left: var(--rail-w);
+}
+.shell-rz-side {
+  top: var(--top-h);
+  right: var(--pane-w);
+  left: auto;
+  margin-right: -4px;
+  margin-left: 0;
+}
+
+/* ---- the main view ------------------------------------------------------------------------------------------------- */
+
+.shell-sheet {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--sheet);
+  scrollbar-color: var(--control) transparent;
+}
+.shell-connecting {
+  margin: 0;
+  padding: var(--s4);
+  color: var(--muted);
+}
+
+/* ---- the sidebar --------------------------------------------------------------------------------------------------- */
+
+.shell-rail {
+  --station-fill: var(--frame);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: var(--frame);
+  border-right: 1px solid var(--rule);
+  scrollbar-color: var(--control) transparent;
+}
+.shell-rail[hidden] {
+  display: none;
+}
+.shell-brand {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s1);
+  height: var(--top-h-base);
+  padding: 0 var(--s2);
+  border-bottom: 1px solid var(--rule);
+}
+.shell-brand-link {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 var(--s2);
+  font-size: var(--t-md);
+  font-weight: 700;
+  line-height: var(--lh-sm);
+  color: var(--ink);
+  text-decoration: none;
+  border-radius: var(--r-control);
+}
+/* The name over what it is and the server's version. The name is never cut; the line under it ends in "…" on a narrow sidebar. */
+.shell-brand-text {
+  display: grid;
+  min-width: 0;
+}
+.shell-brand-name {
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+.shell-brand-kind {
+  font-size: var(--t-xs);
+  font-weight: 400;
+  line-height: var(--lh-xs);
+  color: var(--muted);
+}
+.shell-mark {
+  flex: none;
+}
+.shell-list {
+  margin: 0;
+  padding: var(--s2) 0;
+  list-style: none;
+}
+.shell-sessions {
+  margin: 0;
+  padding: 0 0 var(--s1);
+  list-style: none;
+}
+/* The tree under the views: the machines, their projects and sessions, and "N more machines". The one part of the sidebar that
+   scrolls, so the views above it and the foot below it never move. */
+.shell-tree {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-top: 1px solid var(--rule);
+  scrollbar-color: var(--control) transparent;
+}
+.shell-machines {
+  padding-top: 0;
+}
+.shell-machines > li + li {
+  border-top: 1px solid var(--rule);
+}
+:is(.shell-item, .shell-mach, .shell-mach-fold, .shell-sess, .shell-quiet) {
+  color: var(--ink);
+  text-decoration: none;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+:is(.shell-item, .shell-mach, .shell-mach-fold, .shell-sess, .shell-quiet):hover {
+  background: color-mix(in srgb, var(--frame-on) 60%, transparent);
+}
+/* The highlighted rows (Nav.tsx): the page open, the machine selected (its whole row) and the open session: a tone step and an
+   ink bar at the left edge; secondary text on that tone steps up to --ink-2, which keeps 4.5:1 there. */
+:is(.shell-item[aria-current="page"], .shell-mach-row.is-on, .shell-sess[aria-current="page"]) {
+  background: var(--frame-on);
+  box-shadow: inset 2px 0 0 var(--ink);
+}
+:is(.shell-item[aria-current="page"], .shell-mach-row.is-on, .shell-sess[aria-current="page"]) :is(.shell-mach-id, .shell-mach-count, .shell-mach-os, .shell-sess-clock, .shell-sess-l2) {
+  color: var(--ink-2);
+}
+
+/* The views at the top: Fleet (with its counts), History, Plans, Machines (with "+" beside it). */
+.shell-view {
+  display: flex;
+  align-items: center;
+  padding-right: var(--s1);
+}
+.shell-item {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 var(--s3) 0 var(--s4);
+}
+.shell-item[aria-current="page"] {
+  font-weight: 600;
+}
+.shell-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shell-add.ui-button--icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+}
+/* The Machines view's problems: a warning glyph and how many, in the warning colour (orange, as stuck and offline). */
+.shell-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s1);
+  font: 600 var(--t-xs) / var(--lh-xs) var(--font-mono);
+  color: var(--warn-text);
+}
+
+/* "× Show all machines", between the views and the tree while a machine is selected (Nav.tsx), never squeezed by the tree. */
+.shell-mach.shell-all {
+  flex: none;
+  color: var(--ink-2);
+  border-top: 1px solid var(--rule);
+}
+/* A machine: the chevron that folds its sessions away, then the button that selects it, its OS logo in line with its sessions'
+   marks. */
+.shell-mach-row {
+  display: flex;
+  align-items: stretch;
+}
+.shell-mach-fold {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--s5);
+  margin-left: var(--s1);
+  padding: 0;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.shell-mach-fold[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+.shell-mach-row .shell-mach {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  padding-left: var(--s1);
+}
+.shell-mach {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  min-height: 30px;
+  padding: 0 var(--s3) 0 var(--s4);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.shell-mach-os {
+  display: inline-flex;
+  color: var(--ink-2);
+}
+.shell-mach-name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shell-mach-id {
+  flex: none;
+  font: 400 var(--t-xs) / var(--lh-xs) var(--font-mono);
+  color: var(--muted);
+}
+/* The counts at the right end: the first of them takes the slack. */
+.shell-mach-count {
+  flex: none;
+  min-width: var(--s4);
+  margin-left: auto;
+  font: 400 var(--t-xs) / var(--lh-xs) var(--font-mono);
+  color: var(--muted);
+  text-align: right;
+}
+:is(.shell-mach, .shell-item) .ui-needs {
+  margin-left: auto;
+}
+:is(.shell-mach, .shell-item) .ui-needs + .shell-mach-count {
+  margin-left: 0;
+}
+
+/* A session: one line under its machine, indented past its OS logo. */
+.shell-sess-slot {
+  position: relative;
+}
+.shell-sess {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 30px;
+  padding: 0 var(--s3) 0 var(--s6);
+}
+.shell-sess-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.shell-sess[aria-current="page"] .shell-sess-name {
+  font-weight: 600;
+}
+/* Details: two lines, the second under the name (past the mark): the model, the plan's steps done, the loops running. */
+.shell-sess.is-detailed {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding-top: var(--s1);
+  padding-bottom: var(--s1);
+}
+.shell-sess-l1,
+.shell-sess-l2 {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+}
+.shell-sess-l1 {
+  min-height: 22px;
+}
+.shell-sess-l2 {
+  min-height: 20px;
+  padding-left: var(--s5);
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--muted);
+}
+/* The figures never shrink; the model's name gives way first, with "…", never its effort word or bars (its id is the title).
+   The harness logo is on the row's first line, so the chip here goes without it. */
+.shell-sess-l2 {
+  gap: var(--s1);
+}
+.shell-sess-l2 > .chip {
+  flex: 0 1 auto;
+}
+.shell-sess-l2 > .chip > svg:first-child {
+  display: none;
+}
+.shell-sess-l2 > .chip .chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shell-sess-fig {
+  flex: none;
+  font-family: var(--font-mono);
+  color: var(--ink-2);
+}
+/* The context window's bar, the cards' own, on its own line under the second: it starts where that line does. */
+.shell-sess-ctx {
+  margin: 2px 0 2px var(--s5);
+}
+.shell-sess-agents {
+  margin-left: auto;
+}
+.shell-sess svg.shell-sess-logo {
+  width: 12px;
+  height: 12px;
+  color: var(--ink-2);
+}
+.shell-sess-clock {
+  flex: none;
+  font: 600 var(--t-xs) / var(--lh-xs) var(--font-mono);
+  color: var(--ink);
+}
+.shell-quiet {
+  display: block;
+  padding: var(--s3) var(--s4);
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  color: var(--ink-2);
+  border-top: 1px solid var(--rule);
+}
+/* The foot, under the tree at the column's bottom whatever the tree holds: Details (useDetails), which adds the detail lines to
+   the session rows, the Fleet's cards and its List rows; pressed, it reads as selected, as the console's toggles do. */
+.shell-foot {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  background: var(--frame);
+  border-top: 1px solid var(--rule);
+}
+.shell-detail {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  margin: var(--s1) var(--s2);
+  padding: 0;
+  font: 500 var(--t-xs) / 1 var(--font-ui);
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-control);
+  cursor: pointer;
+}
+.shell-detail:hover {
+  color: var(--ink);
+  background: var(--frame-on);
+}
+.shell-detail[aria-pressed="true"] {
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--band);
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
+/* A project of two or more sessions (Nav.tsx ProjectGroup): its chevron in its sessions' mark column, its name in their names'; its sessions one step in. */
+.shell-mach.shell-proj { padding-left: var(--s6); }
+.shell-proj > svg.i:first-child { width: 16px; height: 16px; color: var(--ink-2); }
+.shell-proj[aria-expanded="false"] > svg.i:first-child { transform: rotate(-90deg); }
+.shell-sess.is-nested { padding-left: calc(var(--s6) + var(--s5)); }
+/* A folded machine's or project's worst state (Nav.tsx Counts), first at the right end. */
+.shell-mach .shell-worst { display: inline-flex; flex: none; margin-left: auto; }
+.shell-mach .shell-worst + .ui-needs,
+.shell-mach .shell-worst + .shell-mach-count { margin-left: 0; }
+
+/* ---- the top bar ---------------------------------------------------------------------------------------------------- */
+
+.shell-top {
+  --station-fill: var(--frame);
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  padding: 0 var(--s2) 0 var(--s3);
+  background: var(--frame);
+  border-bottom: 1px solid var(--rule);
+}
+.shell-top[hidden] {
+  display: none;
+}
+.shell-filter {
+  position: relative;
+  display: flex;
+  flex: 0 1 340px;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 200px;
+  height: 32px;
+  padding: 0 var(--s2);
+  color: var(--muted);
+  background: var(--sheet);
+  border: 1px solid var(--control);
+  border-radius: var(--r-control);
+}
+/* Off the pages that apply it: its place kept, so nothing after it moves; unseen, out of the tab order and unread. */
+.shell-filter.is-off {
+  visibility: hidden;
+}
+.shell-filter:focus-within {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.shell-filter input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  font: inherit;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  outline: 0;
+}
+.shell-filter input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+.shell-conn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s2);
+  height: 32px;
+  padding: 0 var(--s2);
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+  text-decoration: none;
+  white-space: nowrap;
+  background: var(--frame);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+}
+.shell-conn:hover {
+  color: var(--ink);
+  background: var(--frame-on);
+}
+.shell-top-gap {
+  flex: 1;
+}
+/* The Activity switch reads as pressed while the inspector is open. */
+.ui-button.shell-toggle[aria-expanded="true"] {
+  color: var(--ink);
+  background: var(--frame-on);
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
+.shell-top a.ui-button--icon[aria-current="page"] {
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--ink);
+}
+.shell-signin svg.i {
+  width: 12px;
+  height: 12px;
+}
+/* While the top bar is folded away: at the main view's top right, clear of the inspector's head. */
+.shell-show-top {
+  position: absolute;
+  top: var(--s2);
+  right: calc(var(--pane-w) + var(--s3));
+  z-index: 20;
+}
+/* A popover in the top layer, placed under its button (Bar.tsx). */
+.shell-pop {
+  position: fixed;
+  inset: auto;
+  width: 300px;
+  margin: 0;
+  padding: var(--s3) var(--s4);
+  font: 400 var(--t-sm) / var(--lh-sm) var(--font-ui);
+  color: var(--ink);
+  background: var(--sheet);
+  border: 1px solid var(--control);
+  border-radius: var(--r-sheet);
+}
+
+/* ---- the inspector: the activity, or an agent's detail in the docked panel -------------------------------------------- */
+
+.shell-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--sheet);
+  border-left: 1px solid var(--rule);
+}
+.shell-pane[hidden] {
+  display: none;
+}
+.shell-pane > .ui-panel {
+  flex: 1;
+}
+.shell-pane-agent {
+  padding: var(--s3) var(--s4) var(--s4);
+}
+/* A detail's line under its title: one line, its whole text as its title. */
+.shell-pane-sub {
+  display: block;
+}
+.shell-act {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.shell-act-filters {
+  display: flex;
+  flex: none;
+  gap: var(--s2);
+  padding: var(--s2) var(--s2) var(--s2) var(--s4);
+  border-bottom: 1px solid var(--rule);
+}
+.shell-act-filters .ui-select {
+  flex: none;
+  max-width: 50%;
+}
+.shell-find {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 var(--s2);
+  font: inherit;
+  color: var(--ink);
+  background: var(--sheet);
+  border: 1px solid var(--control);
+  border-radius: var(--r-control);
+}
+.shell-find::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+.shell-find:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.shell-act-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-color: var(--control) transparent;
+}
+.shell-act-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* One line per event: its time, its mark, then the session and what happened, cut with "…" (the whole line is the title). */
+.shell-act-row {
+  display: grid;
+  grid-template-columns: max-content 16px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  min-height: 32px;
+  padding: 0 var(--s3) 0 var(--s4);
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+}
+button.shell-act-row {
+  cursor: pointer;
+}
+button.shell-act-row:hover {
+  background: var(--band);
+}
+.shell-act-row time {
+  font: 400 var(--t-xs) / var(--lh-xs) var(--font-mono);
+  color: var(--muted);
+}
+/* An event's mark tells of a moment, so it never pulses as a live mark does. */
+.shell-act-row .station-working {
+  animation: none;
+  will-change: auto;
+}
+/* An event's kind, where it tells of no state: muted, a message and an auto-compact a tone stronger, a step that started in the working colour. */
+.shell-act-kind {
+  justify-self: center;
+  color: var(--muted);
+}
+.shell-act-kind.is-plan {
+  color: var(--line);
+}
+.shell-act-kind:is(.is-message, .is-blow) {
+  color: var(--ink-2);
+}
+/* A failure, and a wait still open, carry their state's colour down the row's edge, as a card does. */
+.shell-act-row.is-bad {
+  box-shadow: inset 2px 0 0 var(--fail);
+}
+.shell-act-row.is-asking {
+  box-shadow: inset 2px 0 0 var(--held);
+}
+.shell-act-text {
+  display: flex;
+  gap: var(--s2);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.shell-act-text > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The session's name gives way before the event (its weight a million times the event's), down to its first 8 characters. */
+.shell-act-text > b {
+  flex: 0 1e6 auto;
+  min-width: 8ch;
+  font-weight: 600;
+}
+.shell-act-text > span {
+  flex: 0 1 auto;
+}
+.shell-act-tool {
+  flex: 0 1 auto;
+  font: 400 var(--t-xs) / var(--lh-xs) var(--font-mono);
+  color: var(--ink-2);
+}
+.shell-act-row.is-bad .shell-act-text > span {
+  color: var(--fail);
+}
+.shell-act-row.is-gone {
+  color: var(--muted);
+}
+/* The count and Show more / Show fewer: a footer pinned to the pane's bottom, under the list that scrolls. */
+.shell-act-more {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3) var(--s2) var(--s4);
+  font-size: var(--t-xs);
+  color: var(--muted);
+  border-top: 1px solid var(--rule);
+}
+.shell-act-more > :first-child {
+  margin-right: auto;
+}
