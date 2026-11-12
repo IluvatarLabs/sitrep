@@ -37,7 +37,7 @@
     "showStatus": {
       "type": "boolean",
       "title": "Status line",
-      "description": "The reporter's state under the prompt: 'dashboard v<version> ● N live', '○ connecting', '○ offline' or '○ token refused', then '· update plugin', '· update server' or '· update available' when the versions differ.",
+      "description": "The reporter's state under the prompt: 'dashboard v<the dashboard's version> ● N live', '○ connecting', '○ offline' or '○ token refused', then '· update plugin', '· update server' or '· update available' when the versions differ.",
       "default": true
     },
     "fullPrompts": {

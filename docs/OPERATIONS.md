@@ -259,7 +259,7 @@ its default.
 | `flushIntervalMs` | `1000` | The least time between reports while something changes, in milliseconds; less than 200 reads as 200 |
 | `heartbeatMs` | `5000` | Report at least this often even when nothing changed, in milliseconds; less than 1000 reads as 1000 |
 | `sessionName` | empty | A display name for this machine's sessions, used after the `/sitrep name` name and Claude Code's own title ([In a Claude Code session](#in-a-claude-code-session)). Usually left empty |
-| `showStatus` | on | Show the reporter's state in the status line under the prompt: `dashboard v<version> ● N live`, or `○ offline`, `○ connecting` or `○ token refused` after the version, with `· update plugin`, `· update server` or `· update available` when the versions do not fit, and `⚠` first when the server is plain HTTP beyond this machine |
+| `showStatus` | on | Show the reporter's state in the status line under the prompt: `dashboard v<version> ● N live`, the version the dashboard's own, as the dashboard shows it under its name (the plugin's is in `/sitrep`); or `○ offline`, `○ connecting` or `○ token refused` in place of the count, with `· update plugin`, `· update server` or `· update available` when the versions do not fit, and `⚠` first when the server is plain HTTP beyond this machine |
 | `fullPrompts` | off | Send each agent's whole task prompt and final answer (up to 20,000 characters each, secrets redacted) so the dashboard can show them in full. Off, only the first 400 characters are sent |
 
 ## Files and services

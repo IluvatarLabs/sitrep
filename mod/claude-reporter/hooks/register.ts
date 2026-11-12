@@ -1114,7 +1114,7 @@ async function sessionStarted($: Engine, e: { cwd: string; surface: string | nul
   const build = prev ? (prev.reporter.build ?? null) : await devBuildOf($);
   const transport =
     prev?.transport ??
-    new Transport((url, init) => $.http.fetch(url, init), { serverUrl: opts.serverUrl, token: opts.token, heartbeatMs: opts.heartbeatMs, version: VERSION, build }, (line) => void keepError('transport', line));
+    new Transport((url, init) => $.http.fetch(url, init), { serverUrl: opts.serverUrl, token: opts.token, heartbeatMs: opts.heartbeatMs, version: VERSION }, (line) => void keepError('transport', line));
   const machine = prev?.machine ?? (await thisMachine($));
   const storedName = await stored($, `name:${id}`);
   const sessionCwd = await quietly<string | null>(() => $.session.cwd(), null);

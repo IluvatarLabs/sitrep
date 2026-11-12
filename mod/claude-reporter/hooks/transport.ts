@@ -45,8 +45,6 @@ type Fetch = (url: string, init: HttpInit) => Promise<Pick<HttpResponse, 'status
 export interface TransportConfig {
   /** This reporter's version, passed in so the transport imports nothing of the mod's. */
   version: string;
-  /** The commit of a dev build; absent or null for a release. */
-  build?: string | null;
   serverUrl: string;
   /** The server's admin secret; empty when it has none. */
   token: string;
@@ -260,9 +258,13 @@ export class Transport {
     return (this.compat === 'ok' || this.compat === null) && mine !== null && newest !== null && mine < newest;
   }
 
-  /** The status line: `dashboard v0.1.0 ● 3 live`, or the state that keeps it from that, then a version hint. */
+  /**
+   * The status line: `dashboard v0.1.0 ● 3 live`, or the state that keeps it from that, then a version hint. The version is
+   * the dashboard's, as the dashboard shows it (the server's, from its last reply; none before the first), never this
+   * plugin's, which `/sitrep` gives.
+   */
   statusText(): string {
-    const name = `${overPlainHttp(this.cfg.serverUrl) ? '⚠ ' : ''}dashboard v${withBuild(this.cfg.version, this.cfg.build)}`;
+    const name = `${overPlainHttp(this.cfg.serverUrl) ? '⚠ ' : ''}dashboard${this.serverVersion ? ` v${this.serverVersion}` : ''}`;
     const notLive = this.refused ? 'token refused' : this.online === false ? 'offline' : this.online === null ? 'connecting' : null;
     if (notLive !== null) return `${name} ○ ${notLive}`;
     const hint = this.compat === 'outdated' ? 'update plugin' : this.compat === 'newer' ? 'update server' : this.behind ? 'update available' : null;
