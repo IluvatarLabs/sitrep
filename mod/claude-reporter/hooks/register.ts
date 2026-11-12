@@ -1218,7 +1218,7 @@ async function dashboardCommand($: Engine, args: string): Promise<string> {
   }
   if (!r) return 'SITREP: session not started yet';
   const t = r.transport;
-  const connection = t.refused ? 'token refused' : t.online === null ? 'connecting' : t.online ? `connected · ${t.liveSessions ?? 1} live` : 'offline';
+  const connection = t.notLive ?? `connected · ${t.live}`;
   const reports = [`${t.sent} sent`, `${t.failed} failed`, `${t.rejected} rejected`, `${t.queue.length} events queued`, ...(t.dropped ? [`${t.dropped} dropped`] : [])];
   const times = Object.entries(hookTimes)
     .filter(([, h]) => h.calls > 0)

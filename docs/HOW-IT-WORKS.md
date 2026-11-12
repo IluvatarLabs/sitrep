@@ -46,8 +46,7 @@ thresholds, are settings.
 
 When a session asks for a permission, an answer or a plan approval, its reporter announces the ask and waits on the
 server for the answer. Signed in, you answer in the dashboard, and the reporter gives the session exactly that answer.
-Answer in the terminal instead and the dashboard's answer is dropped: the first answer wins, and the dashboard says
-what became of yours.
+You can still answer in the terminal: the first answer wins, and the dashboard says what became of yours.
 
 - **Claude Code** sessions are answered through the plugin.
 - **Codex** sessions running in Codex's managed daemon on that machine are answered through it. The others (`codex exec`,

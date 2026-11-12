@@ -184,6 +184,7 @@ export class Transport {
   private rejectedWith(res: Pick<HttpResponse, 'status' | 'text'>, batch: readonly ActivityEvent[], now: number): PostOutcome {
     this.dropAcked(batch, batch.length);
     this.rejected++;
+    this.online = true;
     this.lastError = `report rejected (${res.status})`;
     this.lastSentAt = now;
     this.rejectStreak++;
@@ -258,6 +259,19 @@ export class Transport {
     return (this.compat === 'ok' || this.compat === null) && mine !== null && newest !== null && mine < newest;
   }
 
+  /** What keeps this session off the dashboard; null while the server takes its reports. */
+  get notLive(): 'token refused' | 'offline' | 'connecting' | 'report rejected' | null {
+    if (this.refused) return 'token refused';
+    if (this.online === false) return 'offline';
+    if (this.online === null) return 'connecting';
+    return this.rejectStreak > 0 ? 'report rejected' : null;
+  }
+
+  /** The server's count of live sessions; "live" alone when it has not given one, never a made-up number. */
+  get live(): string {
+    return this.liveSessions === null ? 'live' : `${this.liveSessions} live`;
+  }
+
   /**
    * The status line: `dashboard v0.1.0 ● 3 live`, or the state that keeps it from that, then a version hint. The version is
    * the dashboard's, as the dashboard shows it (the server's, from its last reply; none before the first), never this
@@ -265,10 +279,10 @@ export class Transport {
    */
   statusText(): string {
     const name = `${overPlainHttp(this.cfg.serverUrl) ? '⚠ ' : ''}dashboard${this.serverVersion ? ` v${this.serverVersion}` : ''}`;
-    const notLive = this.refused ? 'token refused' : this.online === false ? 'offline' : this.online === null ? 'connecting' : null;
+    const notLive = this.notLive;
     if (notLive !== null) return `${name} ○ ${notLive}`;
     const hint = this.compat === 'outdated' ? 'update plugin' : this.compat === 'newer' ? 'update server' : this.behind ? 'update available' : null;
-    return `${name} ● ${this.liveSessions ?? 1} live${hint ? ` · ${hint}` : ''}`;
+    return `${name} ● ${this.live}${hint ? ` · ${hint}` : ''}`;
   }
 
   /** Said once when the server is plain HTTP beyond this machine; names no address and no token. */

@@ -27,7 +27,7 @@
 >
 > — Juvenal, *Satires*
 
-![The Fleet](docs/tutorial/01-fleet-cards.png)
+![SITREP](docs/demo.gif)
 
 You run coding agents on a laptop, a workstation and a server. SITREP shows all of them at once: which are working,
 which are waiting on you, which are stuck or have failed. Answer the ones that are waiting from the dashboard, without
