@@ -10,7 +10,7 @@ hunting for their terminal.
 |---|---|---|
 | Every session on every machine as cards, a list or a graph, each with its plan and current step, its agents, model and effort, context fill, git state, cost, and what failed. | Every permission, question and plan that is waiting sits at the top, longest wait first; answer it there or in the terminal, and the first answer wins. | It sends a session only your own answers, messages and commands, never controls a terminal, never starts, stops or restarts a session, stores no transcripts, and runs on a machine you own. |
 
-![The Fleet: every live session as a card, grouped by machine](docs/tutorial/01-fleet-cards.png)
+![The Fleet: every live session as a card, grouped by machine, under the usage panel's estimated spend by model and its charts](docs/tutorial/01-fleet-cards.png)
 
 *A simulated fleet, drawn by the real interface: no project, path or session in the pictures on this page is real.*
 
@@ -21,7 +21,7 @@ No agents needed: a simulator fills the dashboard with a fleet. You need git and
 ```sh
 git clone https://github.com/IluvatarLabs/sitrep ~/sitrep && cd ~/sitrep
 npm ci
-npm run dev        # the server on :4317, the dashboard on http://localhost:5173
+npm run dev        # the server on :7487, the dashboard on http://localhost:5173
 ```
 
 In a second terminal:
@@ -34,7 +34,7 @@ npx tsx scripts/sim.ts --sessions 8 --codex 0.4 --machines 3 --chaos
 ## Install
 
 **Before you put it on a network:** SITREP is built for one person on a trusted LAN. It speaks plain HTTP, by default
-anyone who can reach port 4317 can read every session, and answering needs a sign-in with the admin secret.
+anyone who can reach port 7487 can read every session, and answering needs a sign-in with the admin secret.
 [Operations: Security](docs/OPERATIONS.md#security-one-owner-one-secret) says what that means and how to narrow it.
 
 ### The server
@@ -48,7 +48,7 @@ npx tsx scripts/install.ts --server --bind 0.0.0.0            # dry run: prints 
 npx tsx scripts/install.ts --server --bind 0.0.0.0 --apply
 ```
 
-It starts as a user service and writes an admin secret to `~/.sitrep/server.env`. Open `http://<server IP>:4317`, by
+It starts as a user service and writes an admin secret to `~/.sitrep/server.env`. Open `http://<server IP>:7487`, by
 the machine's IP address: the server refuses a host name until it is listed in `SITREP_ALLOWED_HOSTS`
 ([Operations: Deploy the server](docs/OPERATIONS.md#deploy-the-server), step 6).
 
@@ -60,7 +60,7 @@ OS and harness, each with Copy:
 ```sh
 git clone https://github.com/IluvatarLabs/sitrep ~/sitrep && cd ~/sitrep && npm ci
 npm run build -w codex-reporter                               # only where Codex runs
-npx tsx scripts/install.ts --claude --codex --url http://<server IP>:4317 --token-stdin --apply
+npx tsx scripts/install.ts --claude --codex --url http://<server IP>:7487 --token-stdin --apply
 ```
 
 The installer takes the admin secret on its standard input: paste it, then Ctrl-D. Leave out `--claude` or `--codex` on

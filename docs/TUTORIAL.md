@@ -7,7 +7,7 @@ Every screenshot is the real interface fed by `scripts/sim.ts`; no project, path
 
 ```sh
 npm ci
-npm run dev                                   # the server on :4317, the dashboard on http://localhost:5173
+npm run dev                                   # the server on :7487, the dashboard on http://localhost:5173
 ```
 
 In a second terminal, in the same folder:
@@ -23,13 +23,12 @@ in its environment.
 
 ## The Fleet
 
-![The Fleet as Cards](tutorial/01-fleet-cards.png)
+![The Fleet as Cards, with the usage panel open](tutorial/01-fleet-cards.png)
 
 The home view. At the top, a chip per state; press one to show only those sessions. At the bar's end, today's estimated
-spend and each provider's plan window nearest its limit; press them for the usage panel. Headless runs and sessions
-nobody is attached to sit behind a chip that counts them (**Headless**, **Detached**), there when the fleet has any.
-
-![The usage panel](tutorial/06-usage.png)
+spend and each provider's plan window nearest its limit; press them for the usage panel, open in the picture above.
+Headless runs and sessions nobody is attached to sit behind a chip that counts them (**Headless**, **Detached**), there
+when the fleet has any.
 
 The usage panel: estimated spend by model (today, the last 7 days or all time, ended sessions included), cost per
 minute and output tokens per second. It stays open or closed as you leave it. Each machine's spend and plan windows

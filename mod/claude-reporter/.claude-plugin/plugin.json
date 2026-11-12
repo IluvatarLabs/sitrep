@@ -1,13 +1,13 @@
 {
   "name": "sitrep-reporter",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Reports this Claude Code session (model, effort, plan, agents, context, git, failures) to a SITREP server, and takes answers sent from it.",
   "userConfig": {
     "serverUrl": {
       "type": "string",
       "title": "SITREP server URL",
       "description": "Where the reporter posts session reports.",
-      "default": "http://127.0.0.1:4317"
+      "default": "http://127.0.0.1:7487"
     },
     "token": {
       "type": "string",
@@ -37,7 +37,7 @@
     "showStatus": {
       "type": "boolean",
       "title": "Status line",
-      "description": "The reporter's state under the prompt: 'dashboard v<the dashboard's version> ● N live', '○ connecting', '○ offline' or '○ token refused', then '· update plugin', '· update server' or '· update available' when the versions differ.",
+      "description": "The reporter's state under the prompt: 'dashboard v<the dashboard's version> ● N live', or '○ connecting', '○ offline' or '○ token refused' in place of the count; after the count, '· update plugin' or '· update server' when the versions do not fit, '· update available' when a newer plugin exists.",
       "default": true
     },
     "fullPrompts": {

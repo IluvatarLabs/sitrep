@@ -24,8 +24,6 @@ import { answeredLine, answersByQuestion, asDecision, LINE_MESSAGES_ON, LINE_OPE
 import { addEvent, addFeedEntry, afterCompaction, afterStep, agentAsked, agentSpawned, apiFailure, backgroundLines, continuedAs, drainEvents, endSession, isWatched, markTextSent, measure, newSession, NO_FILES, notified, patchFeedEntry, promptShown, setAttached, setBackground, setFiles, setGit, setIdentity, setWatched, toolAborted, toolResult, toolStarted, turnComplete, turnStart, withListedAgents, withSkill, type ListedAgent, type MeasureInput, type SentTexts, type SessionState } from './state.ts';
 import { headersFor, isDelivery, retryWaitMs, Transport, type PostOutcome } from './transport.ts';
 
-/** The version this reporter reports; kept equal to `version` in .claude-plugin/plugin.json. */
-export const VERSION = '0.3.0';
 const GIT_POLL_MS = 10_000;
 /** How much of a transcript's end is read for Claude's generated title: Claude Code's own head and tail read (2.1.319
  *  `LITE_READ_BUF_SIZE`, 65536), which holds the title because Claude re-appends it every half of that written. */
@@ -34,7 +32,7 @@ const TITLE_TAIL_BYTES = 65_536;
 const END_FLUSH_MS = 1000;
 /** How much text of one watched step is read before the rest passes unread: far more than one 300-character entry needs. */
 const STEP_TEXT_MAX = 8000;
-const DEFAULT_SERVER = 'http://127.0.0.1:4317';
+const DEFAULT_SERVER = 'http://127.0.0.1:7487';
 
 type Engine = EngineInterface;
 
@@ -466,6 +464,21 @@ function runnerFor($: Engine, init: { cwd?: string; timeoutMs: number }): Runner
 async function devBuildOf($: Engine): Promise<string | null> {
   const root = await quietly<string | null>(() => Promise.resolve($.plugin.root), null);
   return root ? devBuild(runnerFor($, { timeoutMs: 5000 }), root) : null;
+}
+
+/**
+ * This plugin's version, from its own manifest, .claude-plugin/plugin.json under the plugin's folder. `unknown`, with the error
+ * kept, when it cannot be read: the server then reads the plugin's compatibility as unknown, and no number is made up.
+ */
+async function ownVersion($: Engine): Promise<string> {
+  try {
+    const { version } = JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)) as { version?: unknown };
+    if (typeof version !== 'string' || version === '') throw new Error('.claude-plugin/plugin.json has no version');
+    return version;
+  } catch (err) {
+    logError($, 'version', err);
+    return 'unknown';
+  }
 }
 
 /** A string the store keeps under `key`, trimmed; null for anything else, an empty one, or a failed read. */
@@ -1110,11 +1123,13 @@ async function sessionStarted($: Engine, e: { cwd: string; surface: string | nul
   state = setIdentity(state, { cwd: e.cwd, projectRoot: top, repoName: repoNameOf(top, repo), model });
   if (usage) state = measure(state, usageFigures(usage));
   if (!same) state = addEvent(state, 'start', null, startText(model, null), now, { surface: e.surface });
-  // The plugin's folder is fixed while this code is loaded, so its commit is read at the load's first session.start only.
+  // The plugin's folder is fixed while this code is loaded, so its commit and its version are read at the load's first
+  // session.start only.
   const build = prev ? (prev.reporter.build ?? null) : await devBuildOf($);
+  const version = prev ? prev.reporter.version : await ownVersion($);
   const transport =
     prev?.transport ??
-    new Transport((url, init) => $.http.fetch(url, init), { serverUrl: opts.serverUrl, token: opts.token, heartbeatMs: opts.heartbeatMs, version: VERSION }, (line) => void keepError('transport', line));
+    new Transport((url, init) => $.http.fetch(url, init), { serverUrl: opts.serverUrl, token: opts.token, heartbeatMs: opts.heartbeatMs, version }, (line) => void keepError('transport', line));
   const machine = prev?.machine ?? (await thisMachine($));
   const storedName = await stored($, `name:${id}`);
   const sessionCwd = await quietly<string | null>(() => $.session.cwd(), null);
@@ -1124,7 +1139,7 @@ async function sessionStarted($: Engine, e: { cwd: string; surface: string | nul
     stopTimers: () => {},
     reporter: {
       name: 'claude-reporter',
-      version: VERSION,
+      version,
       engineVersion: engine?.version ?? null,
       hostSurface: sessionKind !== undefined ? 'background' : (e.surface ?? 'headless'),
       ...(build ? { build } : {}),
@@ -1214,7 +1229,7 @@ async function dashboardCommand($: Engine, args: string): Promise<string> {
   const lines = [
     `SITREP: ${trimTrailingSlashes(opts.serverUrl)}/#/`,
     `Connection: ${connection}`,
-    `Versions: plugin ${withBuild(VERSION, r.reporter.build)}${t.serverVersion ? ` · server ${withBuild(t.serverVersion, t.serverBuild)}` : ''}`,
+    `Versions: plugin ${withBuild(r.reporter.version, r.reporter.build)}${t.serverVersion ? ` · server ${withBuild(t.serverVersion, t.serverBuild)}` : ''}`,
     t.versionNotice() ?? t.updateNotice(),
     `Reports: ${reports.join(' · ')}`,
     failure ? `Last error: ${failure}` : null,

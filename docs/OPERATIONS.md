@@ -25,7 +25,7 @@ Contents:
 
 | Where | What | Started by |
 |---|---|---|
-| The server machine (always on) | The server: one Node 24 process, SQLite, the dashboard on port 4317 | A user service: systemd `--user` with linger |
+| The server machine (always on) | The server: one Node 24 process, SQLite, the dashboard on port 7487 | A user service: systemd `--user` with linger |
 | Every machine with Claude Code | The plugin `sitrep-reporter`, inside each Claude Code session (state, asks, answers); and Claude Code's own telemetry, which carries the sessions' usage | Claude Code, from this repository's plugin marketplace; the telemetry, from the settings the install writes |
 | Every machine with Codex | The Codex plugin `sitrep-codex` (hooks that write a local spool) and the `codex-reporter` process (reads the spool, the session files and the Codex daemon; sends the reports) | Codex, from this repository's plugin marketplace; a user service |
 
@@ -63,18 +63,18 @@ Moving the server is a change of URL in each reporter.
    loginctl enable-linger $USER
    ```
 
-5. **Firewall.** Allow TCP 4317 from the LAN only, for example `sudo ufw allow from 192.0.2.0/24 to any port 4317 proto tcp`.
+5. **Firewall.** Allow TCP 7487 from the LAN only, for example `sudo ufw allow from 192.0.2.0/24 to any port 7487 proto tcp`.
 6. **Host names.** The server refuses a request whose `Host` it does not expect (a guard against DNS rebinding). With
-   `--bind 0.0.0.0`, any IP address works, so `http://192.0.2.10:4317` works as is. To use a name such as
-   `http://server:4317`, add it to `SITREP_ALLOWED_HOSTS` in `server.env` and restart.
+   `--bind 0.0.0.0`, any IP address works, so `http://192.0.2.10:7487` works as is. To use a name such as
+   `http://server:7487`, add it to `SITREP_ALLOWED_HOSTS` in `server.env` and restart.
 7. **Check it.**
 
    ```sh
    systemctl --user status sitrep
-   curl -s -o /dev/null -w '%{http_code}\n' http://192.0.2.10:4317/api/fleet/state    # 200
+   curl -s -o /dev/null -w '%{http_code}\n' http://192.0.2.10:7487/api/fleet/state    # 200
    ```
 
-   Then open `http://192.0.2.10:4317` from the laptop.
+   Then open `http://192.0.2.10:7487` from the laptop.
 
 On macOS, the same install writes `~/Library/LaunchAgents/dev.sitrep.server.plist` instead and loads it with
 `launchctl`; it starts at login and its output goes to `~/.sitrep/server.log`.
@@ -94,7 +94,7 @@ Then:
 
 ```sh
 ssh server "sed -n 's/^SITREP_TOKEN=//p' ~/.sitrep/server.env" \
-  | npx tsx scripts/install.ts --claude --codex --url http://192.0.2.10:4317 --token-stdin
+  | npx tsx scripts/install.ts --claude --codex --url http://192.0.2.10:7487 --token-stdin
 ```
 
 Check the dry run, then run it again with `--apply`. Leave out `--claude` or `--codex` for a machine without that tool.
@@ -104,12 +104,12 @@ the rule below, with the secret from the local `server.env`.
 **Which URL the local reporters get.** With `--url`, both reporters use it. Without it, on a machine with a server
 config (`--server` in this run, or `~/.sitrep/server.env` already there), every run that configures the reporters sets
 them to that server's address, replacing a saved URL: the host is this run's `--bind`, else the saved `HOST`, else
-`127.0.0.1`, and the port is this run's `--port`, else the saved `PORT`, else `4317`. `--bind` and `--port` set where
+`127.0.0.1`, and the port is this run's `--port`, else the saved `PORT`, else `7487`. `--bind` and `--port` set where
 the server listens, so the install takes them only with `--server` and refuses them otherwise; to point the reporters
 at a server, use `--url`. A server bound to `0.0.0.0` or `::` is reached at `127.0.0.1`; one bound to a specific address
 (`localhost`, `::1`, any `127.x`, or a LAN address such as `192.0.2.10`) is reached at that address (an IPv6 address in
-brackets). On a machine without a server config, a reporter set up for the first time sends to `http://127.0.0.1:4317`
-and one set up before keeps its URL: pass `--url` there. When the reporters send to a LAN address over plain HTTP,
+brackets). On a machine without a server config, a reporter set up for the first time sends to `http://127.0.0.1:7487`
+and one set up before keeps the URL it was given (a Claude plugin never given one follows the default): pass `--url` there. When the reporters send to a LAN address over plain HTTP,
 Claude Code on that machine shows its plain-HTTP warning (`⚠` in the status line and a toast); `--bind 0.0.0.0`, as in
 [Deploy](#deploy-the-server), keeps them on `127.0.0.1` without it.
 
@@ -176,7 +176,7 @@ The plugin adds one command:
 
 | Port | What |
 |---|---|
-| 4317/tcp on the server | Everything: the reporters' API, the dashboard, and its live stream (Server-Sent Events). `PORT` changes it |
+| 7487/tcp on the server | Everything: the reporters' API, the dashboard, and its live stream (Server-Sent Events). `PORT` changes it |
 | 5173 on a development machine | The Vite dev server, only under `npm run dev` |
 
 Reporters only make outbound connections. `codex-reporter` talks to the local Codex daemon over its Unix socket, not a
@@ -205,7 +205,7 @@ already in the environment, such as one from the service's `server.env`, wins ov
 | Setting | Default | Meaning |
 |---|---|---|
 | `HOST` | `127.0.0.1` | Where it listens. `0.0.0.0`, or the LAN address, for other machines |
-| `PORT` | `4317` | Its port |
+| `PORT` | `7487` | Its port |
 | `SITREP_TOKEN` | none (the install makes one) | The admin secret: reporters send it in `X-Sitrep-Token`, and you sign in with it to answer sessions. Empty turns auth off: reports are taken from anyone and nothing can be answered. The server warns at start about one shorter than 24 characters |
 | `SITREP_DB` | `<repository>/data/sitrep.sqlite` (the install sets `~/.sitrep/data/sitrep.sqlite`) | The SQLite database (WAL mode: `-wal` and `-shm` files sit beside it) |
 | `SITREP_ALLOWED_HOSTS` | empty | Host names other machines type, comma-separated. `localhost`, `::1`, `127.x.x.x` and the `HOST` address always work; with `HOST=0.0.0.0` any IP address does |
@@ -235,7 +235,7 @@ A timer, retention or stuck setting that is not a number of 0 or more reads as i
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `CODEX_REPORTER_SERVER_URL` | `http://127.0.0.1:4317` | Where reports go |
+| `CODEX_REPORTER_SERVER_URL` | `http://127.0.0.1:7487` | Where reports go |
 | `CODEX_REPORTER_TOKEN` | none | The server's admin secret |
 | `CODEX_REPORTER_RESPOND` | `everything` | How far Codex sessions here take answers: `off`, `questions`, `questions-and-plans` or `everything` |
 | `CODEX_REPORTER_ACTIVITY_FEED` | on | Send the activity feed of a loop someone is watching; on unless `off`, `false` or `0`. Answering needs it on |
@@ -252,14 +252,14 @@ its default.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `serverUrl` | `http://127.0.0.1:4317` | Where reports go. Empty reads as the default |
+| `serverUrl` | `http://127.0.0.1:7487` | Where reports go. Empty reads as the default |
 | `token` | empty | The server's admin secret, sent with every report and request; leave it empty when the server has none (a sensitive option: Claude Code keeps it in its secure storage) |
 | `respond` | `everything` | What the session takes from the dashboard: `off` (nothing), `questions` (answers to questions, and new messages while idle), `questions-and-plans` (also approving or sending back a plan) or `everything` (also allowing once or denying a tool, and `/clear`, `/compact`). Any other value reads as `off`. Needs `activityFeed` on and the server's `SITREP_RESPOND` |
 | `activityFeed` | on | While the dashboard has a loop's panel open, send that loop's last 20 tool calls and the text between them (each cut to 300 characters, secrets redacted), and for a Bash call its whole command (up to 20,000 characters, secrets redacted) and how it ended; command output is never sent. The server keeps it in memory only. Answering needs it on |
 | `flushIntervalMs` | `1000` | The least time between reports while something changes, in milliseconds; less than 200 reads as 200 |
 | `heartbeatMs` | `5000` | Report at least this often even when nothing changed, in milliseconds; less than 1000 reads as 1000 |
 | `sessionName` | empty | A display name for this machine's sessions, used after the `/sitrep name` name and Claude Code's own title ([In a Claude Code session](#in-a-claude-code-session)). Usually left empty |
-| `showStatus` | on | Show the reporter's state in the status line under the prompt: `dashboard v<version> ● N live`, the version the dashboard's own, as the dashboard shows it under its name (the plugin's is in `/sitrep`); or `○ offline`, `○ connecting` or `○ token refused` in place of the count, with `· update plugin`, `· update server` or `· update available` when the versions do not fit, and `⚠` first when the server is plain HTTP beyond this machine |
+| `showStatus` | on | Show the reporter's state in the status line under the prompt: `dashboard v<version> ● N live`, where the version is the dashboard's own, as the dashboard shows it under its name (the plugin's is in `/sitrep`). In place of the count it shows `○ connecting` (with no version until the server first answers), `○ offline` or `○ token refused`. After the count comes `· update plugin` or `· update server` when the versions do not fit, or `· update available` when a newer plugin exists. `⚠` comes first when the server is plain HTTP beyond this machine |
 | `fullPrompts` | off | Send each agent's whole task prompt and final answer (up to 20,000 characters each, secrets redacted) so the dashboard can show them in full. Off, only the first 400 characters are sent |
 
 ## Files and services
@@ -291,7 +291,7 @@ that means:
   report over plain HTTP. Anyone who can watch the LAN can copy it.
 - **The secret can answer.** With it, anyone can answer prompts and send messages to any Claude Code session, and any
   daemon-hosted Codex session, on any machine. Your sign-in in the browser also crosses the LAN in clear.
-- **Reading is open.** Anyone who can reach port 4317 sees every session without signing in: names, machines, paths,
+- **Reading is open.** Anyone who can reach port 7487 sees every session without signing in: names, machines, paths,
   branches, plan steps, and bounded, redacted excerpts of prompts, answers, commands, failed-tool output and messages
   agents send each other.
 - **What leaves each machine.** The reports carry all of that in clear over the LAN; their free text is redacted on the
@@ -305,7 +305,7 @@ that means:
 
 Ways to narrow it, from least to most work:
 
-- Listen on the LAN address and allow port 4317 only from the LAN (see [Deploy](#deploy-the-server)).
+- Listen on the LAN address and allow port 7487 only from the LAN (see [Deploy](#deploy-the-server)).
 - Close reading: Settings → Server → Require sign-in to view, or `SITREP_REQUIRE_SIGN_IN_TO_VIEW=on` as the default.
   The dashboard then shows nothing before the sign-in.
 - Turn answering off: Settings → Server → Answering, or `SITREP_RESPOND=off` as the default. The secret then
@@ -429,11 +429,11 @@ Sessions on the laptop keep running when it leaves the LAN; its reporters queue 
 reach it over SSH from outside:
 
 ```sh
-ssh -N -L 4317:127.0.0.1:4317 server
+ssh -N -L 7487:127.0.0.1:7487 server
 ```
 
-The dashboard is then at `http://localhost:4317`, a secure context, so browser notifications work there. (If the
-server listens only on its LAN address, use `-L 4317:192.0.2.10:4317`. If something on the laptop already uses 4317,
+The dashboard is then at `http://localhost:7487`, a secure context, so browser notifications work there. (If the
+server listens only on its LAN address, use `-L 7487:192.0.2.10:7487`. If something on the laptop already uses 7487,
 pick another local port and use it below.) Settings → About gives this command for the server's address and port, and
 Settings → This browser shows it while notifications are unavailable.
 
@@ -441,11 +441,11 @@ Point the laptop's reporters at the tunnel:
 
 ```sh
 ssh server "sed -n 's/^SITREP_TOKEN=//p' ~/.sitrep/server.env" \
-  | npx tsx scripts/install.ts --claude --codex --url http://127.0.0.1:4317 --token-stdin --apply
+  | npx tsx scripts/install.ts --claude --codex --url http://127.0.0.1:7487 --token-stdin --apply
 ```
 
 With that, the laptop reports only while the tunnel runs, on the LAN or off it; keep the tunnel up whenever you work,
-or switch back with `--url http://192.0.2.10:4317` when you are home. `--url` moves Claude Code's telemetry endpoint
+or switch back with `--url http://192.0.2.10:7487` when you are home. `--url` moves Claude Code's telemetry endpoint
 with the plugin's URL; Claude Code reads it at start, so a session started before the switch sends its usage to the old
 address until restarted.
 

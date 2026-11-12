@@ -17,6 +17,8 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+// The release's manifest, for the version this script gives as its own when it connects to Codex.
+import release from '../package.json' with { type: 'json' };
 
 const HELP = `install: set up the SITREP server and this machine's reporters.
 
@@ -40,10 +42,10 @@ Options:
   --url URL         The server URL the reporters send to. Without it, on a machine with a server config (--server in
                     this run, or ~/.sitrep/server.env), both reporters are set to that server's address on
                     every run: host = --bind, else the saved HOST, else 127.0.0.1 (0.0.0.0 and :: mean 127.0.0.1; any
-                    other address as given); port = --port, else the saved PORT, else 4317. On a machine without one,
-                    a reporter keeps the URL it has, and a new one sends to http://127.0.0.1:4317
+                    other address as given); port = --port, else the saved PORT, else 7487. On a machine without one,
+                    a reporter keeps the URL it has, and a new one sends to http://127.0.0.1:7487
   --bind ADDR       Where the server listens (default 127.0.0.1; 0.0.0.0 lets other machines report). With --server only
-  --port N          The server's port (default 4317). With --server only
+  --port N          The server's port (default 7487). With --server only
   --token-stdin     Read the server's admin secret for the reporters from stdin. Without it the reporters use the
                     secret in this machine's ~/.sitrep/server.env when there is one
   --apply           Make the changes
@@ -365,7 +367,7 @@ export function localServerUrl(o: Pick<InstallOptions, 'server' | 'bind' | 'port
   if (!o.server && !exists) return null;
   const saved = exists ? fs.readFileSync(SERVER_ENV, 'utf8') : '';
   const host = (o.bind ?? envValue(saved, KEYS.serverHost)) || '127.0.0.1';
-  const port = o.port !== null ? String(o.port) : envValue(saved, KEYS.serverPort) || '4317';
+  const port = o.port !== null ? String(o.port) : envValue(saved, KEYS.serverPort) || '7487';
   const reach = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host.includes(':') ? `[${host}]` : host;
   return `http://${reach}:${port}`;
 }
@@ -393,7 +395,7 @@ export function claudePluginOptions(plugin: string): { configured?: unknown; inp
 }
 
 /** The Claude plugin's default server URL, as mod/claude-reporter/.claude-plugin/plugin.json declares it. */
-export const CLAUDE_DEFAULT_URL = 'http://127.0.0.1:4317';
+export const CLAUDE_DEFAULT_URL = 'http://127.0.0.1:7487';
 
 /** The URL the Claude plugin sends to: its saved serverUrl, else its default. */
 export function claudePluginUrl(options: ReturnType<typeof claudePluginOptions>): string {
@@ -494,12 +496,12 @@ function serviceBlockers(svc: Service, built: string): string[] {
 
 function installPlan(o: InstallOptions): Step[] {
   const steps: Step[] = [];
-  const port = o.port ?? 4317;
+  const port = o.port ?? 7487;
   const localServer = localServerUrl(o);
   // The URL both reporters are set to on this run, replacing a saved one: --url, else this machine's server. Null (no
   // server here) keeps a reporter's saved URL, and a new one gets the Claude plugin's default.
   const chosenUrl = o.url ?? localServer;
-  const url = chosenUrl ?? 'http://127.0.0.1:4317';
+  const url = chosenUrl ?? 'http://127.0.0.1:7487';
   let newServerSecret: string | null = null;
 
   if (o.server) {
@@ -730,7 +732,7 @@ export async function openCodexAppServer(): Promise<CodexAppServer> {
   const socket = daemonSocket();
   const rpc = socket ? await overSocket(socket) : overStdio();
   try {
-    await rpc.call('initialize', { clientInfo: { name: 'codex_app_server_daemon', title: 'SITREP install', version: '0.1.0' }, capabilities: null });
+    await rpc.call('initialize', { clientInfo: { name: 'codex_app_server_daemon', title: 'SITREP install', version: release.version }, capabilities: null });
     rpc.notify('initialized');
     return rpc;
   } catch (err) {
@@ -961,7 +963,7 @@ function readArgs(argv: string[]): (InstallOptions & { apply: boolean; tokenStdi
   });
   if (v.help) return 'help';
   const url = v.url === undefined ? null : v.url.replace(/\/+$/, '');
-  if (url !== null && !/^https?:\/\/[^\s/]+$/.test(url)) throw new Error(`--url must be http:// or https:// and a host, such as http://192.0.2.10:4317, not "${url}"`);
+  if (url !== null && !/^https?:\/\/[^\s/]+$/.test(url)) throw new Error(`--url must be http:// or https:// and a host, such as http://192.0.2.10:7487, not "${url}"`);
   const port = v.port === undefined ? null : Number(v.port);
   if (port !== null && (!Number.isInteger(port) || port < 1 || port > 65535)) throw new Error('--port must be a whole number from 1 to 65535');
   const [server, claude, codex] = [v.server, v.claude, v.codex].map(Boolean);

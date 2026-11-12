@@ -24,7 +24,7 @@ const REPO_ROOT = path.join(import.meta.dirname, '..', '..');
 loadEnv({ path: path.join(REPO_ROOT, '.env'), quiet: true });
 
 const env = process.env;
-const PORT = env.PORT ? Number(env.PORT) : 4317;
+const PORT = env.PORT ? Number(env.PORT) : 7487;
 const HOST = env.HOST || '127.0.0.1';
 const DB_PATH = env.SITREP_DB || path.join(REPO_ROOT, 'data', 'sitrep.sqlite');
 // The owner's price overrides, laid over the shipped copy of LiteLLM's table and its refresh at start (pricing.ts).

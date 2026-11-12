@@ -22,8 +22,10 @@ import { readMachine } from '../../codex-reporter/src/machine.js';
 import { clip, excerpt, promptName } from '../../codex-reporter/src/report.js';
 import { Transport } from '../../codex-reporter/src/transport.js';
 import { ACTIVE_WINDOW_MS, HermesStore, hermesHome, type LastTurn, type ModelTokens, type StoredAgent, type StoredSession } from './store.js';
+// This package's manifest: the build copies it beside dist/hermes-reporter/src/, so the same import finds it there.
+import manifest from '../package.json' with { type: 'json' };
 
-export const VERSION = '0.1.0';
+export const VERSION = manifest.version;
 const PROVIDER = 'hermes';
 /** codex-reporter's cadence: a pass every second, a heartbeat every 5 s. */
 const TICK_MS = 1000;

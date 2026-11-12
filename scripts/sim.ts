@@ -31,13 +31,15 @@ import {
   type Report,
   type TokenCounts,
 } from '../server/src/fleet/protocol.ts';
+// The release's manifest: the reports claim its version by default, as this release's reporters do.
+import release from '../package.json' with { type: 'json' };
 
 const HELP = `sim: POST simulated Claude Code and Codex session reports to a SITREP server.
 
 Usage: npx tsx scripts/sim.ts [options]
 
 Options:
-  --url URL             The dashboard server; reports and Claude telemetry go to it. Default http://127.0.0.1:4317
+  --url URL             The dashboard server; reports and Claude telemetry go to it. Default http://127.0.0.1:7487
   --sessions N          Sessions open at a time, 1 to 50; each one that ends is replaced. Default 5
   --codex SHARE         The part of them that are Codex sessions, 0 to 1. Default 0.4
   --machines N          Machines to spread them over, 1 to 8: a Mac laptop first, then Linux servers. Default 3
@@ -49,8 +51,8 @@ Options:
                         tools failing in a row (errored), more blowouts, and plan windows filling faster
   --agents N            Ad-hoc agents every session starts with, beyond its plan, to load the UI. Default 0
   --nested              Keep one Claude session whose agents launch agents, four levels deep
-  --reporter-version V  The reporter version the reports claim. Default 0.1.0-sim, outside every range the server
-                        reads, so it shows no update warning
+  --reporter-version V  The reporter version the reports claim. Default ${release.version}, this release's version, which fits a
+                        server of the same release, so it shows no update warning
   --print               Send nothing: write each report, and each Claude telemetry export with the machine it comes
                         from, to stdout as one JSON line. Ends after --ticks
   --ticks N             With --print, the simulated seconds to run. Default 60
@@ -325,7 +327,7 @@ const FEED_SCRIPT: Record<Provider, [ActivityEntry['kind'], string][]> = {
     ['tool', 'Grep "lastActivityAt" in server/src/fleet'],
     ['tool', 'Edit server/src/fleet/derive.ts'],
     ['tool', 'Bash npm test -- derive'],
-    ['tool', 'Bash curl -H "Authorization: [redacted]" http://127.0.0.1:4317/api/fleet/state'],
+    ['tool', 'Bash curl -H "Authorization: [redacted]" http://127.0.0.1:7487/api/fleet/state'],
     ['text', 'Tests pass; the panel is next.'],
   ],
   codex: [
@@ -1278,7 +1280,7 @@ function readArgs(argv: string[]): Args | null {
       return null;
     }
     return {
-      url: (v.url ?? 'http://127.0.0.1:4317').replace(/\/+$/, ''),
+      url: (v.url ?? 'http://127.0.0.1:7487').replace(/\/+$/, ''),
       sessions: Math.round(numberArg('sessions', v.sessions, 1, 50, 5)),
       codex: numberArg('codex', v.codex, 0, 1, 0.4),
       machines: Math.round(numberArg('machines', v.machines, 1, 8, 3)),
@@ -1288,7 +1290,7 @@ function readArgs(argv: string[]): Args | null {
       chaos: v.chaos ?? false,
       extraAgents: Math.round(numberArg('agents', v.agents, 0, 190, 0)),
       nested: v.nested ?? false,
-      reporterVersion: v['reporter-version'] ?? '0.1.0-sim',
+      reporterVersion: v['reporter-version'] ?? release.version,
       print: v.print ?? false,
       ticks: Math.round(numberArg('ticks', v.ticks, 1, 1e7, 60)),
     };

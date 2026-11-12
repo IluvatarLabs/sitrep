@@ -1,5 +1,6 @@
 {
   "name": "sitrep",
+  "version": "0.4.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -18,7 +19,8 @@
     "test": "npm run test -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w frontend && npm run typecheck -w codex-reporter && npm run typecheck -w hermes-reporter && tsc -p scripts/tsconfig.json --noEmit && bash mod/claude-reporter/typecheck.sh",
     "lint": "eslint .",
-    "check:protocol": "cmp server/src/fleet/protocol.ts mod/claude-reporter/hooks/protocol.ts"
+    "check:protocol": "cmp server/src/fleet/protocol.ts mod/claude-reporter/hooks/protocol.ts",
+    "version": "node scripts/plugin-versions.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.6",

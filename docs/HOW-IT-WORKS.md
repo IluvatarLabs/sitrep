@@ -10,7 +10,7 @@
 
 | Piece | Where it runs | What it does |
 |---|---|---|
-| The server | One machine that stays on | One Node process with a SQLite database. Port 4317 carries everything: the reporters' API, the dashboard and its live stream |
+| The server | One machine that stays on | One Node process with a SQLite database. Port 7487 carries everything: the reporters' API, the dashboard and its live stream |
 | The Claude Code plugin, `sitrep-reporter` | Inside each Claude Code session | Reports the session's state, its asks and their answers |
 | Claude Code's own telemetry | Each Claude Code session | Carries the session's usage to the server, one event per API request. The installer turns it on |
 | The Codex plugin, `sitrep-codex`, and `codex-reporter` | Each machine that runs Codex | The plugin's hooks write to a local spool; the reporter service reads the spool, Codex's session files and the Codex daemon, and sends the reports |
@@ -82,7 +82,7 @@ when it is back.
 
 SITREP is built for one person on a trusted LAN.
 
-- It speaks plain HTTP. By default anyone who can reach port 4317 can read every session; Settings → Require sign-in to
+- It speaks plain HTTP. By default anyone who can reach port 7487 can read every session; Settings → Require sign-in to
   view closes that.
 - One admin secret does everything else: the reporters send it with their reports, and you sign in with it to answer a
   session or change a setting.

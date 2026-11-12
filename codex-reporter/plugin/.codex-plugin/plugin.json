@@ -1,5 +1,5 @@
 {
   "name": "sitrep-codex",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "SITREP: records bounded, redacted Codex hook events to a local spool for the codex-reporter. Never decides anything, never touches the network."
 }

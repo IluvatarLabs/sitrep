@@ -3,7 +3,7 @@
 // dashboard server (1 s dirty flush, 5 s heartbeat, git every 10 s). Configuration comes from the environment or a `.env`
 // file in the working directory, like the server's:
 //
-//   CODEX_REPORTER_SERVER_URL     the dashboard server (default http://127.0.0.1:4317, the server's default port)
+//   CODEX_REPORTER_SERVER_URL     the dashboard server (default http://127.0.0.1:7487, the server's default port)
 //   CODEX_REPORTER_TOKEN          the admin secret, sent as X-Sitrep-Token
 //   CODEX_REPORTER_RESPOND        off | questions | questions-and-plans | everything (default everything)
 //   CODEX_REPORTER_ACTIVITY_FEED  on unless "off", "false" or "0"
@@ -24,8 +24,10 @@ import { Responder, type Store } from './respond.js';
 import { codexHome, fileLines, listRollouts, NO_NAMES, parseRolloutLine, sessionOfFile, threadNames, type RolloutFile } from './sessionFiles.js';
 import { JsonlTail } from './spool.js';
 import { Transport } from './transport.js';
+// This package's manifest: the build copies it beside dist/codex-reporter/src/, so the same import finds it there.
+import manifest from '../package.json' with { type: 'json' };
 
-export const VERSION = '0.3.0';
+export const VERSION = manifest.version;
 const FLUSH_MS = 1000;
 const HEARTBEAT_MS = 5000;
 const GIT_POLL_MS = 10_000;

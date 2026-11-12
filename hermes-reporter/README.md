@@ -37,7 +37,7 @@ again whenever it changes, so usage Hermes writes after a session ends reaches t
 It uses codex-reporter's configuration, `codex-reporter/src/config.ts` (the environment, or a `.env` in the working
 directory), so one env file serves both:
 
-- `CODEX_REPORTER_SERVER_URL`: the dashboard server (default `http://127.0.0.1:4317`)
+- `CODEX_REPORTER_SERVER_URL`: the dashboard server (default `http://127.0.0.1:7487`)
 - `CODEX_REPORTER_TOKEN`: the admin secret
 - `HERMES_HOME`: the Hermes home holding `state.db` (default `/hermes`, the sidecar's mount)
 
