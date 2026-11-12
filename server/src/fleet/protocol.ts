@@ -81,9 +81,10 @@ export type UsageTokens = TokenCounts & { cacheWrite1h: number };
 /**
  * What one model used, for the server to price against its table. `tier: 'long'` marks a long-context request: for
  * Claude, a prompt (input, cache reads and cache writes together) over 100,000 tokens; for Codex, input over 272,000 tokens,
- * where OpenAI's long-context pricing starts.
+ * where OpenAI's long-context pricing starts. `tier: 'fast'` marks a request made in Claude's fast mode, whose price is one
+ * rate at any prompt length.
  */
-const USAGE_TIERS = ['std', 'long'] as const;
+const USAGE_TIERS = ['std', 'long', 'fast'] as const;
 export interface ModelUsage {
   model: string;
   tier: (typeof USAGE_TIERS)[number];
@@ -1025,6 +1026,8 @@ export interface PriceRowView {
   std: ModelPriceSet;
   /** The row's prices for a long request, when it has them, and when they apply ("over 272K input tokens"). */
   long?: { when: string; prices: ModelPriceSet };
+  /** The row's prices for a fast-mode request, when it has them, and when they apply ("in fast mode"). */
+  fast?: { when: string; prices: ModelPriceSet };
 }
 
 /** GET /api/fleet/settings (a browser read), and the reply to PUT /api/fleet/admin/settings. */

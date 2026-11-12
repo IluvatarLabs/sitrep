@@ -19,6 +19,7 @@ import { useRespond } from "../../useRespond";
 import { clock, type Part } from "./bits";
 import { endReasonWords } from "./endReason";
 import { gitFacts } from "./GitFacts";
+import { agentName } from "./trace";
 
 /** A pencil: the Rename control beside the name. */
 const PENCIL = (
@@ -165,16 +166,35 @@ export function SessionHead({ s, now, readOnly }: HeadProps) {
   );
 }
 
-/** Files another loop edited within 5 minutes of this session editing them, each with who and when. */
-function Collisions({ s }: { s: SessionView }) {
+/**
+ * Files another loop edited within 5 minutes of this session editing them, each with who and when. An agent is named as
+ * the Timeline names it and, in another session the page holds, with that session. Loops that still read the same on one
+ * file (agents of one type in a session that has left the page) are one line with their count, at the latest of them.
+ */
+function Collisions({ s, sessions }: { s: SessionView; sessions: Readonly<Record<string, SessionView>> }) {
   const fileName = (path: string) => path.split("/").filter(Boolean).pop() ?? path;
+  const who = (c: SessionView["collisions"][number]): string => {
+    const session = c.sessionId === s.id ? s : sessions[c.sessionId];
+    const agent = c.agentId === null ? undefined : session?.agents.find((a) => a.id === c.agentId);
+    const name = agent ? agentName(agent) : c.name;
+    if (c.sessionId === s.id) return `${name} in this session`;
+    return agent && session ? `${name} in ${session.name}` : name;
+  };
+  // Newest first, as the server lists them, so a line's first collision is its latest.
+  const lines = new Map<string, { who: string; path: string; at: number; loops: number }>();
+  for (const c of s.collisions) {
+    const name = who(c);
+    const line = lines.get(`${name}\n${c.path}`);
+    if (line) line.loops += 1;
+    else lines.set(`${name}\n${c.path}`, { who: name, path: c.path, at: c.at, loops: 1 });
+  }
   return (
     <ul className="sv-notice sv-coll" aria-label="Files also edited by another loop">
-      {s.collisions.map((c) => (
-        <li key={`${c.path}:${c.sessionId}:${c.agentId ?? ""}`} title={c.path}>
-          {`Also edited by ${c.name}${c.sessionId === s.id ? " in this session" : ""}: `}
-          <span className="sv-mono">{fileName(c.path)}</span>
-          <span className="sv-muted">{` at ${clock(c.at)}`}</span>
+      {[...lines].map(([key, l]) => (
+        <li key={key} title={l.path}>
+          {`Also edited by ${l.who}${l.loops > 1 ? ` (${l.loops} loops)` : ""}: `}
+          <span className="sv-mono">{fileName(l.path)}</span>
+          <span className="sv-muted">{` at ${clock(l.at)}`}</span>
         </li>
       ))}
     </ul>
@@ -182,7 +202,7 @@ function Collisions({ s }: { s: SessionView }) {
 }
 
 /** What the owner should know about this session's reporting: a reporter out of range, Codex hooks off, files another loop edited. */
-export function SessionNotices({ s, readOnly }: { s: SessionView; readOnly: boolean }) {
+export function SessionNotices({ s, sessions, readOnly }: { s: SessionView; sessions: Readonly<Record<string, SessionView>>; readOnly: boolean }) {
   const reporter = versionNote(s);
   return (
     <>
@@ -196,7 +216,7 @@ export function SessionNotices({ s, readOnly }: { s: SessionView; readOnly: bool
           {hooksOffText(s)}
         </p>
       ) : null}
-      {!readOnly && s.collisions.length ? <Collisions s={s} /> : null}
+      {!readOnly && s.collisions.length ? <Collisions s={s} sessions={sessions} /> : null}
     </>
   );
 }

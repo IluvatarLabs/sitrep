@@ -1,5 +1,5 @@
 // Claude Code's own telemetry (code.claude.com/docs/en/monitoring-usage): one OTLP log event, `api_request`, per model API request,
-// naming its request id, session, agent, model and token counts. Claude usage comes from these. This reads one OTLP/HTTP
+// naming its request id, session, agent, model, speed and token counts. Claude usage comes from these. This reads one OTLP/HTTP
 // JSON logs export (opentelemetry.io/docs/specs/otlp, "JSON Protobuf Encoding": lowerCamelCase keys, 64-bit integers as decimal
 // strings or numbers) and keeps only those events, and of each only the attributes usage needs. Every other event and attribute
 // (the account, email and prompt fields among them) is dropped here and never stored or logged.
@@ -21,7 +21,7 @@ export interface ApiRequest {
 const LONG_PROMPT = 100_000;
 
 /** The only attributes read. */
-const WANTED = new Set(['event.name', 'request_id', 'session.id', 'agent_id', 'model', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens', 'cache_creation_5m_tokens', 'cache_creation_1h_tokens']);
+const WANTED = new Set(['event.name', 'request_id', 'session.id', 'agent_id', 'model', 'speed', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens', 'cache_creation_5m_tokens', 'cache_creation_1h_tokens']);
 
 /** An OTLP AnyValue, of the kinds read here. */
 interface AnyValue {
@@ -58,7 +58,8 @@ function ms(nanos: unknown): number | null {
 /**
  * One `api_request` record as a request; null when it lacks what counting it needs: its request id, session id, model and four token
  * counts. Cache writes are split by lifetime as Claude Code reports them; writes it gives no lifetime for (both splits 0, as when
- * the API reports none) are 5-minute writes, the API's default lifetime.
+ * the API reports none) are 5-minute writes, the API's default lifetime. A request Claude Code marks `speed: "fast"` is of the
+ * fast tier at any prompt length, as fast mode is billed; one it marks "normal", or does not mark, is long or standard.
  */
 function requestOf(attrs: ReadonlyMap<string, AnyValue>, t: number): ApiRequest | null {
   const requestId = str(attrs.get('request_id'), LIMITS.id);
@@ -68,7 +69,7 @@ function requestOf(attrs: ReadonlyMap<string, AnyValue>, t: number): ApiRequest 
   if (!requestId || !sessionId || !model || input === null || output === null || cacheRead === null || written === null) return null;
   const oneHour = count(attrs.get('cache_creation_1h_tokens')) ?? 0;
   const tokens: UsageTokens = { input, output, cacheRead, cacheWrite: Math.max(count(attrs.get('cache_creation_5m_tokens')) ?? 0, written - oneHour), cacheWrite1h: oneHour };
-  const tier = input + cacheRead + written > LONG_PROMPT ? 'long' : 'std';
+  const tier = str(attrs.get('speed'), LIMITS.short) === 'fast' ? 'fast' : input + cacheRead + written > LONG_PROMPT ? 'long' : 'std';
   return { requestId, sessionId, agentId: str(attrs.get('agent_id'), LIMITS.id), t, usage: { model, tier, tokens } };
 }
 

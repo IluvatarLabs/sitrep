@@ -21,6 +21,8 @@ export interface ModelPrice {
   std: ModelPriceSet;
   /** Higher prices for a long request (the reporters' `long` tier: Claude over 100,000 prompt tokens, Codex over 272,000 input tokens); only some models have them. */
   long?: ModelPriceSet;
+  /** The prices of a request made in Claude's fast mode (the `fast` tier); only the models that have a fast mode. */
+  fast?: ModelPriceSet;
 }
 
 /** Where a start's price table came from (Settings). */
@@ -72,7 +74,9 @@ const tidy = (n: number): number => Number(n.toPrecision(12));
  * One LiteLLM entry as a price row, or null when it has no input and output price per token. A cache rate it leaves out is, for
  * Claude, its usual multiple of the input price (reads 0.1×, 5-minute writes 1.25×, 1-hour writes 2×), and the input price for
  * any other model, as OpenAI bills cache use it lists no price for. The 1-hour write is LiteLLM's `_above_1hr` rate (Anthropic)
- * or `_above_12hr` (OpenAI's 12-hour write).
+ * or `_above_12hr` (OpenAI's 12-hour write). A model with a fast mode carries LiteLLM's multiple for it
+ * (`provider_specific_entry.fast`), which LiteLLM applies to a fast request's whole cost, cache reads and writes included
+ * (its `llms/anthropic/cost_calculation.py`); the fast prices here are the standard ones times it.
  */
 function litellmRow(id: string, e: Record<string, unknown>): ModelPrice | null {
   const rate = (field: string): number | null => {
@@ -98,7 +102,9 @@ function litellmRow(id: string, e: Record<string, unknown>): ModelPrice | null {
   const std = set('');
   if (std === null) return null;
   const long = set(longSuffix(id));
-  return { label: id, std, ...(long ? { long } : {}) };
+  const times = (e.provider_specific_entry as { fast?: unknown } | null | undefined)?.fast;
+  const fast = typeof times === 'number' && Number.isFinite(times) && times > 0 ? (Object.fromEntries(PRICE_FIELDS.map((field) => [field, tidy(std[field] * times)])) as unknown as ModelPriceSet) : null;
+  return { label: id, std, ...(long ? { long } : {}), ...(fast && priceFault(fast) === null ? { fast } : {}) };
 }
 
 /**
@@ -123,13 +129,13 @@ export function parsePrices(json: unknown, where = 'prices'): Record<string, Mod
   if (!models || typeof models !== 'object' || Array.isArray(models)) throw new Error(`${where}: expected an object "models"`);
   const out: Record<string, ModelPrice> = {};
   for (const [key, row] of Object.entries(models as Record<string, unknown>)) {
-    const r = (row ?? {}) as { label?: unknown; std?: unknown; long?: unknown };
-    for (const tier of ['std', 'long'] as const) {
-      const problem = tier === 'long' && r.long === undefined ? null : priceFault(r[tier]);
+    const r = (row ?? {}) as { label?: unknown; std?: unknown; long?: unknown; fast?: unknown };
+    for (const tier of ['std', 'long', 'fast'] as const) {
+      const problem = tier !== 'std' && r[tier] === undefined ? null : priceFault(r[tier]);
       if (problem) throw new Error(`${where}: models.${key}.${tier}: ${problem}`);
     }
     const label = typeof r.label === 'string' ? r.label : key;
-    out[key.toLowerCase()] = { label, std: r.std as ModelPriceSet, ...(r.long === undefined ? {} : { long: r.long as ModelPriceSet }) };
+    out[key.toLowerCase()] = { label, std: r.std as ModelPriceSet, ...(r.long === undefined ? {} : { long: r.long as ModelPriceSet }), ...(r.fast === undefined ? {} : { fast: r.fast as ModelPriceSet }) };
   }
   return out;
 }
@@ -180,13 +186,13 @@ export class Pricing {
     return key !== undefined && Object.hasOwn(this.table, key) ? this.table[key]! : null;
   }
 
-  /** The rows that price `models`, one per model, in its order, each with its long prices and when they apply; unpriced models are left out. */
+  /** The rows that price `models`, one per model, in its order, each with its long and fast prices and when they apply; unpriced models are left out. */
   rowsFor(models: readonly string[]): PriceRowView[] {
     return models.flatMap((model) => {
       const row = this.rowFor(model);
       if (!row) return [];
       const when = isClaude(keyOf(model)) ? 'over 100K prompt tokens' : 'over 272K input tokens';
-      return [{ model, label: row.label, std: row.std, ...(row.long ? { long: { when, prices: row.long } } : {}) }];
+      return [{ model, label: row.label, std: row.std, ...(row.long ? { long: { when, prices: row.long } } : {}), ...(row.fast ? { fast: { when: 'in fast mode', prices: row.fast } } : {}) }];
     });
   }
 
@@ -205,7 +211,7 @@ export class Pricing {
       if (row === null) unpriced = true;
       else {
         priced = true;
-        total += usdAt(tokens, tier === 'long' && row.long ? row.long : row.std);
+        total += usdAt(tokens, (tier === 'std' ? undefined : row[tier]) ?? row.std);
       }
     }
     return unpriced && !priced ? null : total;

@@ -338,7 +338,7 @@ export function ingestReport(f: FleetDb, report: Report, serverTime: number, own
 /**
  * Stores a batch of Claude Code's API requests from one machine, in one transaction. A request already counted (its id
  * noted) is skipped, so an exporter's resend counts nothing. Each new one adds its tokens to its session's sums, and books its price,
- * at the long tier when its own prompt is long, to the spend record on its own day: every request is spend as it happens, with no
+ * at the fast tier when it was made in fast mode, else at the long tier when its own prompt is long, to the spend record on its own day: every request is spend as it happens, with no
  * mark and no first figure. A session not reported yet keeps its sums until its first report reads them. Each stored session the
  * batch touched then takes its usage, and its agents theirs, from the sums, and this second's sample with what the batch booked for
  * it; a report in the same second writes the same sample again with the same figures (storeSample), so nothing counts twice.

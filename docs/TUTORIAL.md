@@ -77,9 +77,10 @@ amber needs you, blue idle, orange stuck, red failed.
 
 At the top are its state and name; machine, model and effort, path, repo and git state; and Resume, Fork and the
 session id to copy. Then its facts (cost, tokens, time, context, the last minute's trends), its plan as a checklist,
-and its agents as a Timeline or a tree with their files. At the foot is the message box (a message, `/clear` or
-`/compact`); a session the dashboard cannot answer, like the simulator's, reads "Answer in its terminal" instead. An
-open question, permission or plan shows first, with its answer.
+and its agents as a Timeline or a tree with their files. **Hide done** takes the done agents off the Timeline.
+At the foot is the message box (a message, `/clear` or `/compact`); a session the dashboard cannot answer, like the
+simulator's, reads "Answer in its terminal" instead. An open question, permission or plan shows first, with its
+answer.
 
 ## Machines
 
@@ -98,7 +99,7 @@ exports) and the commands that fix them. **Remove** and **Remove silent** take m
 ![Settings](tutorial/10-settings.png)
 
 Server settings (answering, the activity feed, stuck thresholds, timers, retention) apply at once. Prices shows what
-each model costs, long-context lines included. This browser holds the theme, notifications, refresh rates, Animation
+each model costs, long-context and fast-mode lines included. This browser holds the theme, notifications, refresh rates, Animation
 and the keys.
 
 ![History](tutorial/11-history.png)

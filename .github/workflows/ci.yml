@@ -1,0 +1,58 @@
+# CI, on every push and pull request: lint, the protocol copy, the tests and the build, on Linux and macOS with Node 24;
+# and on Node 22.15, the oldest Node a machine that only reports may run, the install, the Codex reporter's build and its
+# start. Only in the published repository: a copy of it elsewhere runs nothing.
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    if: github.repository == 'IluvatarLabs/sitrep'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false  # no step needs the token
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run check:protocol
+      - run: npm test
+      - run: npm run build
+  reporter:
+    if: github.repository == 'IluvatarLabs/sitrep'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.15.0
+          cache: npm
+      # npm warns that the repository asks for Node 24, and installs.
+      - run: npm ci
+      - run: npm run build -w codex-reporter
+      # In an empty home, with no server to reach: it says what it reports to, then keeps trying until the timeout ends it
+      # (status 124). One that stops by itself has failed, whatever it printed.
+      - name: The Codex reporter starts and keeps running
+        env:
+          CODEX_REPORTER_SERVER_URL: http://127.0.0.1:9
+          CODEX_REPORTER_TOKEN: ci
+        run: |
+          export HOME="$RUNNER_TEMP/home" CODEX_HOME="$RUNNER_TEMP/home/codex" CLAUDE_CONFIG_DIR="$RUNNER_TEMP/home/claude"
+          mkdir -p "$HOME"
+          status=0
+          timeout 10 node codex-reporter/dist/codex-reporter/src/main.js > "$RUNNER_TEMP/start.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/start.log"
+          test "$status" -eq 124
+          grep -q 'codex-reporter [0-9.]*: reporting to http://127.0.0.1:9' "$RUNNER_TEMP/start.log"

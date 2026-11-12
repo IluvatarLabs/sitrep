@@ -60,7 +60,7 @@ That is all SITREP does to a session. It never controls a terminal, and never st
 ## Usage and cost
 
 - **Claude Code:** every API request is counted once, from Claude Code's own telemetry, so the figure covers its side
-  requests too.
+  requests too. A fast-mode request is priced at the model's fast rate.
 - **Codex:** from the usage Codex records for each response in its session files.
 
 The server prices the tokens with LiteLLM's public price table, plus your own overrides. Every cost is an estimate and

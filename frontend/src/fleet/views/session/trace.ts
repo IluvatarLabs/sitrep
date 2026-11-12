@@ -3,7 +3,7 @@
 // row is a line on one shared time axis from its start to its end (or now). Marks sit on the lines where something
 // happened: an ask, a wait on the owner, a failure, an auto-compact, a message between loops, a file two loops edited.
 // The drawing pans and zooms over one plain time scale; `axisTicks` labels whatever span is in view.
-import { agentElapsedSec, agentOrder, buildTree, familyName, ORCHESTRATOR_ROW, type AgentSortKey } from "../../logic";
+import { agentElapsedSec, agentOrder, buildTree, familyName, ORCHESTRATOR_ROW, type AgentSortKey, type TreeRow } from "../../logic";
 import { readableEvent } from "../../eventText";
 import { fmtClock, fmtDay, fmtTok, plural } from "../../format";
 import { stateOf, waitingOnByRow } from "../../states";
@@ -70,6 +70,8 @@ export interface Trace {
   t0: number;
   t1: number;
   live: boolean;
+  /** How many agents "Hide done" takes off the drawing, counted whether or not it is on. */
+  done: number;
 }
 
 const ASK_NOUN: Record<AskKind, string> = { question: "Question", permission: "Permission request", plan: "Plan approval" };
@@ -97,8 +99,23 @@ export function agentKindText(a: AgentView): string {
   return a.kind === "fork" ? "fork" : a.type;
 }
 
-/** The rows: the main loop first, then the agent tree in its order. */
-function traceRows(s: SessionView, now: number, sort: { key: AgentSortKey | null; dir: 1 | -1 }): TraceRow[] {
+/**
+ * The agents "Hide done" takes off the Timeline, by their place in `tree`: a done agent with nothing under it still running,
+ * queued, failed or stopped, so a line left on the drawing never loses the line it branched from. In buildTree's order an
+ * agent's descendants follow it, each deeper than it.
+ */
+function doneBranches(tree: readonly TreeRow[]): boolean[] {
+  const gone = new Array<boolean>(tree.length);
+  for (let i = tree.length - 1; i >= 0; i--) {
+    let all = tree[i]!.agent.status === "done";
+    for (let j = i + 1; all && j < tree.length && tree[j]!.guides.length > tree[i]!.guides.length; j++) all = gone[j]!;
+    gone[i] = all;
+  }
+  return gone;
+}
+
+/** The rows: the main loop first, then the agent tree in its order, without its done branches when they are hidden. */
+function traceRows(s: SessionView, now: number, sort: { key: AgentSortKey | null; dir: 1 | -1 }, hideDone: boolean): { rows: TraceRow[]; done: number } {
   const live = s.status !== "done";
   const end = sessionEnd(s, now);
   const asking = new Set(s.asks.filter((a) => a.state !== "closed" && a.agentId !== null).map((a) => a.agentId!));
@@ -124,8 +141,10 @@ function traceRows(s: SessionView, now: number, sort: { key: AgentSortKey | null
     },
   ];
   const tree = buildTree(s.agents, sort.key ? agentOrder(sort.key, sort.dir, now) : undefined);
+  const gone = doneBranches(tree);
   const index = new Map<string, number>();
-  for (const { agent: a, guides } of tree) {
+  for (const [i, { agent: a, guides }] of tree.entries()) {
+    if (hideDone && gone[i]) continue;
     const station = agentStationKind(a, live && asking.has(a.id), delegating.has(a.id));
     const finished = a.status === "done" || a.status === "failed" || a.status === "aborted";
     const start = Math.min(a.startedAt, end);
@@ -148,7 +167,7 @@ function traceRows(s: SessionView, now: number, sort: { key: AgentSortKey | null
       queued: a.status === "queued",
     });
   }
-  return rows;
+  return { rows, done: gone.filter(Boolean).length };
 }
 
 /** An auto-compact in words: the tokens before and after when the server saw them, and a request that overran the window. */
@@ -281,13 +300,14 @@ function traceMarks(s: SessionView, rows: readonly TraceRow[], events: readonly 
   return marks.sort((a, b) => a.t - b.t);
 }
 
-export function buildTrace(s: SessionView, now: number, sort: { key: AgentSortKey | null; dir: 1 | -1 }, events: readonly ActivityView[]): Trace {
-  const rows = traceRows(s, now, sort);
+export function buildTrace(s: SessionView, now: number, sort: { key: AgentSortKey | null; dir: 1 | -1 }, events: readonly ActivityView[], hideDone = false): Trace {
+  const { rows, done } = traceRows(s, now, sort, hideDone);
+  // A mark from or to a hidden agent is left off with its row, as for any loop not on the trace (traceMarks).
   const marks = traceMarks(s, rows, events);
   const t0 = Math.min(s.startedAt, ...rows.map((r) => r.start));
   // How short a span the view fits is the Timeline's own floor (MIN_SPAN), not the trace's.
   const t1 = Math.max(rows[0]!.end, ...rows.map((r) => r.end));
-  return { rows, marks, t0, t1, live: s.status !== "done" };
+  return { rows, marks, t0, t1, live: s.status !== "done", done };
 }
 
 // ---- the axis ------------------------------------------------------------------------------------------------------

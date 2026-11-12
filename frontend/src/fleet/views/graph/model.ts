@@ -175,9 +175,14 @@ export function buildGraph(sessions: readonly SessionView[], group: GroupBy, lab
 
 /** Text widths in em, generous for IBM Plex Sans: the page never measures text. */
 const EM: Readonly<Record<string, number>> = { " ": 0.3, i: 0.27, l: 0.27, j: 0.29, ".": 0.3, ",": 0.3, ":": 0.3, ";": 0.3, "|": 0.3, "!": 0.3, "'": 0.25, f: 0.38, t: 0.38, r: 0.4, "(": 0.38, ")": 0.38, "[": 0.36, "]": 0.36, I: 0.3, m: 0.88, w: 0.8, M: 0.92, W: 1, "·": 0.34, "…": 0.94, "-": 0.44, _: 0.58, "/": 0.4 };
+/**
+ * A character drawn a full em wide, in the system's face (Plex has none): CJK ideographs, kana, hangul and the marks written
+ * with them (by script extension, so "ー" and "・" count), their punctuation and full-width forms.
+ */
+const WIDE = /[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Hangul}　-〿！-｠￠-￦]/u;
 export function textW(text: string, px: number, bold = false): number {
   let em = 0;
-  for (const c of text) em += EM[c] ?? (c >= "A" && c <= "Z" ? 0.69 : c >= "0" && c <= "9" ? 0.6 : c >= "a" && c <= "z" ? 0.555 : 0.7);
+  for (const c of text) em += EM[c] ?? (c >= "A" && c <= "Z" ? 0.69 : c >= "0" && c <= "9" ? 0.6 : c >= "a" && c <= "z" ? 0.555 : WIDE.test(c) ? 1 : 0.7);
   return em * px * (bold ? 1.05 : 1.01) + 2;
 }
 /** The provider logo and its gap before a loop's second line, px. */

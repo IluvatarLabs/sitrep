@@ -395,9 +395,8 @@ fetch failed. To refresh the shipped copy, download the file from LiteLLM's repo
 
 ## Codex hook trust
 
-Codex runs a plugin's hooks only once they are trusted, and ties that trust to a hash of the plugin's contents
-(`codex-rs/hooks/src/engine/plugin_trust.rs`), so every plugin update needs it again. `install.ts --codex` writes it
-as Codex's own `/hooks` screen does (`codex-rs/tui/src/hooks_rpc.rs`):
+Codex runs a plugin's hooks only once they are trusted, and ties that trust to a hash of the plugin's contents, so
+every plugin update needs it again. `install.ts --codex` writes it as Codex's own `/hooks` screen does:
 
 1. `hooks/list`, for the hooks Codex finds;
 2. for our plugin's hooks that it lists as untrusted or modified, and no other, one `config/batchWrite`: key path
@@ -407,8 +406,7 @@ as Codex's own `/hooks` screen does (`codex-rs/tui/src/hooks_rpc.rs`):
 It reaches Codex's app-server the way Codex's own clients do: through the managed daemon's socket when the daemon
 runs, else a private `codex app-server` over stdio. The dry run prints both requests. Our keys look like
 `sitrep-codex@sitrep:hooks/hooks.json:<event>:<group>:<handler>` (for example
-`sitrep-codex@sitrep:hooks/hooks.json:pre_tool_use:0:0`; `codex-rs/hooks/src/lib.rs` `hook_key`,
-`declarations.rs`). Codex keeps them in `~/.codex/config.toml` under `[hooks.state]`, with a content baseline in
+`sitrep-codex@sitrep:hooks/hooks.json:pre_tool_use:0:0`). Codex keeps them in `~/.codex/config.toml` under `[hooks.state]`, with a content baseline in
 `~/.codex/.hook-trust/`. If the install cannot reach Codex, it says so; then trust the `sitrep-codex` hooks in Codex's
 `/hooks` instead.
 

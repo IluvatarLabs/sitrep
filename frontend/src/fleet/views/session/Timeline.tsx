@@ -1,8 +1,8 @@
 // The session page's Timeline: the delegation trace. The agent tree runs down the left, in launch order or the chosen order
 // among siblings; each loop is a line on one shared time axis on the right, branching off the line that launched it with a
 // 45-degree knee and ending in its station. Marks sit where something happened; one toolbar row over the drawing holds the
-// Timeline ⇄ Agents switch, the view's controls and the order among siblings, with the legend of every kind of mark it draws
-// on its own row under it. On a live page the inspector lists the same events in words (one source, useSessionEvents; `]`
+// Timeline ⇄ Agents switch, the view's controls, Hide done (the done agents off the drawing, for a session with many) and the
+// order among siblings, with the legend of every kind of mark it draws on its own row under it. On a live page the inspector lists the same events in words (one source, useSessionEvents; `]`
 // reopens it) and each row is a button; a stored page from History has no live inspector list, so it lists them below the
 // drawing. Either list is how a keyboard reaches what a mark says.
 // The drawing pans and zooms in time only: drag, or scroll sideways, to pan; pinch, Ctrl or ⌘ with the wheel, or − and + to zoom;
@@ -14,9 +14,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { fmtClock, fmtSpan, plural } from "../../format";
 import type { AgentSort } from "../../components/AgentTree";
 import { defaultAgentDir, ORCHESTRATOR_ROW, type AgentSortKey } from "../../logic";
+import { readJson, writeJson } from "../../storage";
 import type { ActivityView, SessionView } from "../../types";
 import { Station, StationWord } from "../../ui/Station";
-import { AGENT_SORT_LABELS, axisTicks, buildTrace, eventWords, rowSeconds, type Mark, type MarkKind, type Trace, type TraceRow } from "./trace";
+import { AGENT_SORT_LABELS, agentName, axisTicks, buildTrace, eventWords, rowSeconds, type Mark, type MarkKind, type Trace, type TraceRow } from "./trace";
 import { dotsText } from "../../ui/Dots";
 import { clock, useWidth } from "./bits";
 import type { SessionEvents } from "./useSessionEvents";
@@ -31,6 +32,8 @@ const TOP = 8;
 const KNEE = 12;
 /** Events listed at first and added per "Show more". */
 const EVENTS_PAGE = 12;
+/** The owner's choice to hide done agents, one for every session; off until they make it. */
+const HIDE_DONE_KEY = "session.hideDone";
 
 // ---- the time view -------------------------------------------------------------------------------------------------
 
@@ -646,7 +649,7 @@ interface DrawingProps {
   selected: string | null;
   flash: string | null;
   onAgent: (id: string) => void;
-  /** The toolbar row's first and last controls: the Timeline ⇄ Agents switch, and the order among siblings. */
+  /** The toolbar row's first and last controls: the Timeline ⇄ Agents switch, and which agents show and in what order. */
   lead?: ReactNode;
   order: ReactNode;
 }
@@ -824,25 +827,37 @@ interface TimelineProps {
 }
 
 export function Timeline({ s, now, events, eventList, sort, onSort, selected, flash = null, onAgent, lead }: TimelineProps) {
-  const trace = useMemo(() => buildTrace(s, now, sort, events.events), [s, now, sort, events.events]);
-  const { rows } = trace;
-  const rowNames = useMemo(() => new Map(rows.map((r) => [r.id, r.parent === null ? `${r.name} (main loop)` : r.name])), [rows]);
+  const [hideDone, setHideDone] = useState(() => readJson<unknown>(HIDE_DONE_KEY, false) === true);
+  const trace = useMemo(() => buildTrace(s, now, sort, events.events, hideDone), [s, now, sort, events.events, hideDone]);
+  // Every loop's name, the hidden ones' too: the event list names them all.
+  const rowNames = useMemo(() => new Map([[ORCHESTRATOR_ROW, `${s.name} (main loop)`], ...s.agents.map((a): [string, string] => [a.id, agentName(a)])]), [s.name, s.agents]);
   const pickSort = (value: string) => {
     if (value === "launch") onSort({ key: null, dir: 1 });
     else onSort({ key: value as AgentSortKey, dir: defaultAgentDir(value as AgentSortKey) });
   };
+  const toggleDone = () => {
+    writeJson(HIDE_DONE_KEY, !hideDone);
+    setHideDone(!hideDone);
+  };
   const order = (
-    <label className="sv-field sv-order">
-      <span>Order siblings by</span>
-      <select className="ui-select" value={sort.key ?? "launch"} onChange={(e) => pickSort(e.target.value)}>
-        <option value="launch">Launch time</option>
-        {(Object.keys(AGENT_SORT_LABELS) as AgentSortKey[]).map((k) => (
-          <option key={k} value={k}>
-            {AGENT_SORT_LABELS[k]}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div className="sv-order">
+      {trace.done > 0 ? (
+        <button type="button" className="ui-button sv-hide" aria-pressed={hideDone} title="Take the done agents off the Timeline. One with an agent under it that is not done stays." onClick={toggleDone}>
+          Hide done <b>{trace.done}</b>
+        </button>
+      ) : null}
+      <label className="sv-field">
+        <span>Order siblings by</span>
+        <select className="ui-select" value={sort.key ?? "launch"} onChange={(e) => pickSort(e.target.value)}>
+          <option value="launch">Launch time</option>
+          {(Object.keys(AGENT_SORT_LABELS) as AgentSortKey[]).map((k) => (
+            <option key={k} value={k}>
+              {AGENT_SORT_LABELS[k]}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
   );
 
   return (

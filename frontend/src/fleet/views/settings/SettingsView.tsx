@@ -2,8 +2,8 @@
 // server keeps in its settings table with server.env as the defaults and applies at once, Require sign-in to view among
 // them; a change needs the sign-in, goes out as a partial PUT, and Reset sends null, which drops the stored value so
 // server.env's applies again; a timer below its minimum is refused here as the server refuses it. Prices: where the table came
-// from (LiteLLM at start, or the built-in snapshot and why), the table, read-only, a row's long-request prices on a second line
-// under it, and the models seen with no price. This browser: theme, animation, notifications, refresh rates, and the console's
+// from (LiteLLM at start, or the built-in snapshot and why), the table, read-only, a row's long-request and fast-mode prices on
+// lines of their own under it, and the models seen with no price. This browser: theme, animation, notifications, refresh rates, and the console's
 // keys with a button that hides or shows the top bar. About: what only server.env and a restart change, the server's commands,
 // and the backup.
 import { Fragment, useCallback, useEffect, useId, useState, type ReactNode } from "react";
@@ -289,9 +289,9 @@ function Prices({ body }: { body: SettingsBody }) {
             </tr>
           </thead>
           <tbody>
-            {body.prices.rows.map(({ model, label, std, long }) => (
+            {body.prices.rows.map(({ model, label, std, long, fast }) => (
               <Fragment key={model}>
-                <tr className={long ? "st-has-long" : undefined}>
+                <tr className={long || fast ? "st-has-long" : undefined}>
                   {/* The label shows only when it differs from the id (an override's name, or the priced row's key for an alias or a
                       `[1m]` id); the id always shows, once. */}
                   <th scope="row">
@@ -304,18 +304,21 @@ function Prices({ body }: { body: SettingsBody }) {
                     </td>
                   ))}
                 </tr>
-                {long ? (
-                  <tr className="st-long">
-                    <th scope="row" aria-label={`${label}, ${long.when}`}>
-                      {long.when}
-                    </th>
-                    {PRICE_COLUMNS.map(([key]) => (
-                      <td key={key} className="st-n">
-                        {fmtPrice(long.prices[key])}
-                      </td>
-                    ))}
-                  </tr>
-                ) : null}
+                {/* A row's other prices, each on its own line under it: a long request's, then a fast-mode one's. */}
+                {[long, fast].map((other, i, all) =>
+                  other ? (
+                    <tr key={other.when} className={all.slice(i + 1).some(Boolean) ? "st-long st-has-long" : "st-long"}>
+                      <th scope="row" aria-label={`${label}, ${other.when}`}>
+                        {other.when}
+                      </th>
+                      {PRICE_COLUMNS.map(([key]) => (
+                        <td key={key} className="st-n">
+                          {fmtPrice(other.prices[key])}
+                        </td>
+                      ))}
+                    </tr>
+                  ) : null,
+                )}
               </Fragment>
             ))}
           </tbody>

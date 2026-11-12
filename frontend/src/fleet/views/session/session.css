@@ -289,7 +289,10 @@ td.sv-n { font-variant-numeric: tabular-nums; }
    Fit, Now; how the drawing moves is their title), and the order among siblings. */
 .sv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); min-height: 32px; margin-bottom: var(--s2); }
 .sv-bar > * { flex: none; }
-.sv-order { margin-left: auto; }
+.sv-order { display: flex; align-items: center; gap: var(--s4); margin-left: auto; }
+/* Hide done: pressed, it reads as selected, as the Fleet's Background chip does; its count in the mono face. */
+.ui-button.sv-hide[aria-pressed="true"] { font-weight: 600; background: var(--band); box-shadow: inset 0 -2px 0 var(--ink); }
+.sv-hide b { font-family: var(--font-mono); font-weight: 600; }
 .sv-tl-view { display: flex; align-items: center; gap: var(--s1); }
 .sv-tl-view .ui-button { min-width: 32px; }
 

@@ -182,7 +182,7 @@ export function SessionPage(props: SessionPageProps) {
   return <Page key={props.session.id} {...props} />;
 }
 
-function Page({ session: s, now, readOnly = false, back, events }: SessionPageProps) {
+function Page({ fleet, session: s, now, readOnly = false, back, events }: SessionPageProps) {
   const [mode, setMode] = useState<Mode>("timeline");
   const [order, setOrder] = useState<AgentSort>(LAUNCH_ORDER);
   const [compactsOpen, setCompactsOpen] = useState(false);
@@ -211,7 +211,7 @@ function Page({ session: s, now, readOnly = false, back, events }: SessionPagePr
     <div className="sv-page" ref={pageRef}>
       {back}
       <SessionHead s={s} now={now} readOnly={readOnly} />
-      <SessionNotices s={s} readOnly={readOnly} />
+      <SessionNotices s={s} sessions={fleet.sessions} readOnly={readOnly} />
       {!readOnly && needsYou(s) ? <AskCard s={s} now={now} /> : null}
       <FactsBar s={s} now={now} readOnly={readOnly} onAgent={pickHere} compacts={{ open: compactsShown, onToggle: () => setCompactsOpen(!compactsOpen), controls: compactsId }} />
       {compactsShown ? <BlowoutCallout s={s} onAgent={pickHere} id={compactsId} /> : null}
