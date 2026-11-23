@@ -1,6 +1,6 @@
 {
   "name": "sitrep-reporter",
-  "version": "0.6.2",
+  "version": "0.5.0",
   "description": "Reports this Claude Code session (model, effort, plan, agents, context, git, failures, and a record of its turns and tool calls) to a SITREP server, and takes answers sent from it.",
   "userConfig": {
     "serverUrl": {
