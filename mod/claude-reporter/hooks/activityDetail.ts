@@ -2,16 +2,13 @@
 // command, and once it returns how it ended. Never its output: the contract leaves command output out.
 // Pure. A command goes through the free-text redaction in failures.ts (its broader rules), after ANSI codes and
 // other control characters are taken out, so a coloured secret is still caught.
-import { cutNote, cutRaw, feedCall, redactFreeText, type CallResult } from './failures.ts';
+import { cutNote, cutRaw, EXIT_LINE, feedCall, redactFreeText, toolStopped, type CallResult } from './failures.ts';
 import type { ActivityEntry } from './protocol.ts';
 
 /** Characters of a command sent, before the cut-off marker. */
 const COMMAND_MAX = 20_000;
 /** Raw characters read before redaction, so a huge command costs bounded work. */
 const RAW_MAX = 100_000;
-/** A failed Bash call's text starts with Claude Code's own status line, such as `Exit code 1`. */
-const EXIT_LINE = /^Exit code (-?\d{1,3})(?:\n|$)/;
-
 // ---- control characters ---------------------------------------------------------------------------------------------
 
 const ESC = 0x1b;
@@ -47,7 +44,7 @@ function afterEscape(text: string, at: number): number {
 }
 
 /** `text` without escape sequences or control characters; line feeds and tabs stay, a carriage return goes. */
-function withoutControls(text: string): string {
+export function withoutControls(text: string): string {
   const kept: string[] = [];
   let runStart = 0;
   let i = 0;
@@ -85,14 +82,15 @@ export function toolEntry(at: number, tool: string, input: Record<string, unknow
 }
 
 /**
- * How a Bash call ended, for its entry: always `done`; `failed` when a permission decision denied it or it errored; and for an
+ * How a Bash call ended, for its entry: always `done`; `failed` when a permission decision denied it or it errored, not when
+ * the person stopped it (toolStopped); and for an
  * error, `exitCode` from the status line Claude Code writes first in the call's text. The result has no numeric code and no
  * output past that line is read (never parsed from output text), so an error without the line, or with a negative code the
  * contract cannot carry, has none. Every field is checked, as the result arrives untyped.
  */
 export function finishedCall(res: CallResult): Pick<ActivityEntry, 'done' | 'failed' | 'exitCode'> {
   const denied = typeof res.deny === 'string';
-  if (!denied && res.isError !== true) return { done: true };
+  if ((!denied && res.isError !== true) || toolStopped(res)) return { done: true };
   const text = denied ? '' : ([res.text, res.result].find((v): v is string => typeof v === 'string') ?? '');
   const exitCode = Number(EXIT_LINE.exec(text)?.[1] ?? -1);
   return exitCode >= 0 ? { done: true, failed: true, exitCode } : { done: true, failed: true };

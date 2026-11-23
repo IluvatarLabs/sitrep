@@ -154,6 +154,8 @@ async function diffBase(run: Runner, top: string, start: string, head: string | 
 export interface Changes {
   /** The starting commit, handed back on the next read. */
   base: string;
+  /** The commit HEAD is at, in full; null before a first commit. */
+  head: string | null;
   files: FilesReport;
 }
 
@@ -225,7 +227,7 @@ export async function changedFiles(run: Runner, cwd: string, base: string | null
       added += f.added ?? 0;
       removed += f.removed ?? 0;
     }
-    return { base: from, files: { files: files.slice(0, MAX_FILES), total: files.length, added, removed, since } };
+    return { base: from, head, files: { files: files.slice(0, MAX_FILES), total: files.length, added, removed, since } };
   } catch {
     return null;
   }

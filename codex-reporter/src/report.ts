@@ -12,6 +12,8 @@ import {
   type ModelUsage,
   type Report,
   type RespondInfo,
+  type RowText,
+  type TraceRow,
 } from '../../server/src/fleet/protocol.js';
 
 export const LIMITS = {
@@ -42,17 +44,17 @@ export const clip = (text: string, max: number): string => redact(text).slice(0,
 const CLIP_RAW = 4000;
 
 /**
- * `text` cut to CLIP_RAW characters; a cut one loses its last, partial token (its final run of non-whitespace), so a secret
- * cut in half is never shown in part. Matched from the start, which is linear where `/\S+$/` is quadratic on a long run.
+ * `text` cut to `max` (CLIP_RAW) characters; a cut one loses its last, partial token (its final run of non-whitespace), so a
+ * secret cut in half is never shown in part. Matched from the start, which is linear where `/\S+$/` is quadratic on a long run.
  */
-function rawCut(text: string): string {
-  return text.length > CLIP_RAW ? (/^[\s\S]*\s/.exec(text.slice(0, CLIP_RAW))?.[0] ?? '') : text;
+function rawCut(text: string, max = CLIP_RAW): string {
+  return text.length > max ? (/^[\s\S]*\s/.exec(text.slice(0, max))?.[0] ?? '') : text;
 }
 
 /**
- * Display text taken from a command or a tool's free-text argument (a wait note `Shell(…)`, a shell call's summary, a
- * message to another agent), cut to CLIP_RAW, redacted with the broader rules too (plugin/hooks/redact.mjs
- * `redactFreeText`) and held to `max` characters.
+ * Text a person or a model wrote freely (a wait note `Shell(…)`, a shell call's summary, a message to another agent, the text
+ * a model request wrote, an agent's prompt and answer), cut to CLIP_RAW, redacted with the broader rules too
+ * (plugin/hooks/redact.mjs `redactFreeText`) and held to `max` characters.
  */
 export function clipFreeText(text: string, max: number): string {
   return redactFreeText(rawCut(text).replace(ANSI, ' ')).slice(0, max);
@@ -61,8 +63,19 @@ export function clipFreeText(text: string, max: number): string {
 /** Whitespace collapsed first, then cut (rawCut), so redaction sees whole what an entry can show. */
 const flatten = (text: string): string => rawCut(text.replace(/\s+/g, ' ').trim());
 
-/** The first 400 characters with whitespace collapsed, redacted; empty for no text. */
-export const excerpt = (text: string | null | undefined, max: number = LIMITS.excerpt): string => (text ? clip(flatten(String(text)), max) : '');
+/**
+ * A text a model wrote that every reader sees (an agent's prompt or answer, a request's text in the feed), whitespace
+ * collapsed, held to `max` characters: the narrow rules, which were all these had, then the free-text rules over the result
+ * (either can quote a command or a connection string, which the narrow rules leave in clear). The narrow rules run first and
+ * over the text as written, so neither shows what it masked before.
+ */
+const clipShown = (text: string, max: number): string => clipFreeText(redact(flatten(text)), max);
+
+/** The first 400 characters of an agent's prompt or answer; empty for no text. */
+export const excerpt = (text: string | null | undefined): string => (text ? clipShown(String(text), LIMITS.excerpt) : '');
+
+/** A name held to `max` characters, whitespace collapsed: the narrow rules, so it reads as written. Empty for no text. */
+export const shortName = (text: string | null | undefined, max: number): string => (text ? clip(flatten(String(text)), max) : '');
 
 /**
  * A session name taken from a prompt: whitespace folded and trimmed, redacted with the free-text rules (clipFreeText), held to
@@ -71,8 +84,8 @@ export const excerpt = (text: string | null | undefined, max: number = LIMITS.ex
  */
 export const promptName = (text: string | null, max: number): string => (text ? clipFreeText(text.replace(/\s+/g, ' ').trim(), max).trim() : '');
 
-/** One activity-feed entry for the text a model request wrote: whitespace collapsed, redacted, cut to 300 characters. */
-export const activityText = (text: string): string => clip(flatten(text), LIMITS.activity);
+/** One activity-feed entry for the text a model request wrote, cut to 300 characters. */
+export const activityText = (text: string): string => clipShown(text, LIMITS.activity);
 
 /**
  * The one argument that keeps the narrow rules, by tool, as the mod's PATH_TOOLS list (failures.ts clipCall): Codex's built-in
@@ -97,6 +110,44 @@ export function summarizeCall(tool: string, args: Record<string, unknown>): stri
   const name = clip(tool, LIMITS.call - 1);
   const arg = flatten(s(first));
   return arg ? `${name} ${(narrow ? clip : clipFreeText)(arg, LIMITS.call - name.length - 1)}` : name;
+}
+
+// ---- the record's text (full capture) -------------------------------------------------
+
+/** Characters of one part of a row's text, before its cut-off note (protocol LIMITS.rowText leaves room for the note). */
+const KEPT_TEXT = 20_000;
+
+/**
+ * A part of a row's text as the harness wrote it, held to one character past KEPT_TEXT, so keptText still sees it was longer. It
+ * stays on the machine, unredacted, until a report takes its row.
+ */
+export const rawText = (text: string): string => text.slice(0, KEPT_TEXT + 1);
+
+/** Two raw parts of one text (a turn's prompts, a response's messages), one after the other. */
+export const joinRaw = (was: string | undefined, text: string): string => rawText(was ? `${was}\n\n${text}` : text);
+
+/**
+ * One part of a row's text as a report sends it: control characters out (line feeds and tabs stay), redacted with the free-text
+ * rules (clipFreeText's), and cut at KEPT_TEXT characters with the note the Claude reporter puts after a cut command
+ * (mod/claude-reporter/hooks/activityDetail.ts toolEntry).
+ */
+function keptText(raw: string): string {
+  const text = redactFreeText(rawCut(raw, KEPT_TEXT).replace(ANSI, ' '));
+  return raw.length > KEPT_TEXT || text.length > KEPT_TEXT ? `${text.slice(0, KEPT_TEXT)}\n\n[cut off at 20,000 characters]` : text;
+}
+
+/** A row as a reporter queues it: at full capture its text still raw (`raw`, each part a rawText), until a report takes it. */
+export type QueuedRow = TraceRow & { raw?: RowText };
+
+/**
+ * A queued row as a report sends it: its raw text redacted and cut (keptText), once, when a report first takes the row, so the work
+ * is bounded by what one report carries (LIMITS.rowTextChars) and never done for a row that is dropped.
+ */
+export function keptRow(row: QueuedRow): TraceRow {
+  if (!row.raw) return row;
+  const { raw, ...kept } = row;
+  const text: RowText = Object.fromEntries(Object.entries(raw).flatMap(([part, v]) => (v ? [[part, keptText(v)]] : [])));
+  return Object.keys(text).length ? { ...kept, text } : kept;
 }
 
 // ---- display name ---------------------------------------------------------------------------------

@@ -52,8 +52,9 @@ export const cutNote = (n: number): string => `[cut off at ${thousands(n)} chara
 // ---- free text from commands and tool input or output (the broader rules) ---------------------------------------------
 //
 // Run only over what a person or a model wrote freely: a command, a tool's free-text argument, a failed call's output, a
-// denial's reason, a message, a first prompt. Ids, paths, names and asks get `redact` above instead, since the long random
-// value rule here would mistake a `toolu_…` id or a path segment for a secret.
+// denial's reason, a message, a first prompt, the text a model request wrote, an agent's prompt and answer. Ids, paths, names
+// and asks get `redact` above instead, since the long random value rule here would mistake a `toolu_…` id or a path segment
+// for a secret.
 
 const MARK = '[redacted]';
 /** What a rule that keeps the text before the secret leaves: that text (its first group, or first two), then the mark. */
@@ -191,12 +192,12 @@ function redactText(text: string): string {
 const REDACT_PIECE = 1000;
 
 /**
- * `redactText` for a text of any size: a line over REDACT_PIECE is cut into pieces (at a space where it has one), each piece
- * redacted, and the line put back together. A secret straddling a cut is not seen.
+ * `redactText` for a text of any size: a line over REDACT_PIECE is cut into pieces (piecesOf), each piece redacted, and the line
+ * put back together. A secret straddling a cut is not seen in this pass (redactFreeText runs a second, `shift`ed).
  */
-function redactBroad(text: string): string {
+function redactBroad(text: string, shift = 0): string {
   if (text.length <= REDACT_PIECE) return redactText(text);
-  const lines = text.split('\n').map(piecesOf);
+  const lines = text.split('\n').map((line) => piecesOf(line, shift));
   const flat = lines.flat();
   const redacted = redactText(flat.join('\n'));
   const back = redacted.split('\n');
@@ -211,13 +212,16 @@ function redactBroad(text: string): string {
   return rebuilt.join('\n');
 }
 
-/** One line in pieces of at most REDACT_PIECE characters, each ending just after a space when one falls in its range. */
-function piecesOf(line: string): string[] {
+/**
+ * One line in pieces of at most REDACT_PIECE characters: unshifted, each ending just after a space when one falls in its range;
+ * shifted, the first `shift` long and every cut fixed, so they mostly fall between an unshifted run's.
+ */
+function piecesOf(line: string, shift: number): string[] {
   const pieces: string[] = [];
   let start = 0;
   do {
-    let stop = Math.min(start + REDACT_PIECE, line.length);
-    if (stop < line.length) {
+    let stop = Math.min(start + (start === 0 && shift > 0 ? shift : REDACT_PIECE), line.length);
+    if (stop < line.length && shift === 0) {
       const space = line.lastIndexOf(' ', stop);
       if (space > start) stop = space + 1;
     }
@@ -228,16 +232,24 @@ function piecesOf(line: string): string[] {
 }
 
 /**
- * Free text with anything shaped like a secret as `[redacted]`: the broader rules, then the rules of `redact` over the whole
- * text, so it never redacts less than `redact` does.
+ * Free text with anything shaped like a secret as `[redacted]`: the broader rules, then the rules of `redact` over the
+ * result, for what only those know. Best effort, as every rule here is, and not always as much as `redact` alone: the
+ * narrow rules find a value by its key, and a broader rule can mask that key as another key's value and leave the value
+ * (`auth: password="…"` shows the quoted password, where `redact` masks it).
  */
 export function redactFreeText(text: string): string {
-  return redact(redactBroad(text));
+  const once = redact(redactBroad(text));
+  // A secret a cut splits is in neither piece: where a line was cut, the whole redaction runs again over what the first pass
+  // gave, in fixed pieces offset by half a piece, so the first pass's cuts mostly fall inside the second's (overlapping windows,
+  // as chunked scanners read: trufflehog pkg/sources/chunker.go). Best effort: the first pass's masks move the second's cuts,
+  // and a secret the first pass masked in part is not whole for the second. A pass only masks, so the second never shows what
+  // the first masked.
+  return text.split('\n').some((line) => line.length > REDACT_PIECE) ? redact(redactBroad(once, REDACT_PIECE / 2)) : once;
 }
 
 /**
  * Raw characters a clipped free text is redacted from: ten times the longest `max` it is held to (400), and a bound on the
- * work, as ACTIVITY_RAW is for the feed: on some inputs the broader rules cost up to 50 ms per thousand characters.
+ * work, as ACTIVITY_RAW is for the feed: on some inputs the broader rules cost about 100 ms per thousand characters.
  */
 const CLIP_RAW = 4000;
 
@@ -254,14 +266,30 @@ export function clipFreeText(text: string, max: number): string {
   return redactFreeText(cutRaw(text, CLIP_RAW)).slice(0, max);
 }
 
-/** Whitespace folded to single spaces, redacted, at most `max` (400) characters. Empty for no text. */
-export const excerpt = (text?: string | null, max: number = LIMITS.excerpt): string => (text ? clip(text.replace(/\s+/g, ' ').trim(), max) : '');
+/**
+ * A text a model wrote that every reader sees (an agent's prompt or answer, a request's text in the feed, a wake-up's
+ * prompt), held to `max` characters: the narrow rules, which were all these had, then the free-text rules over the result
+ * (any of them can quote a command or a connection string, which the narrow rules leave in clear). The narrow rules run
+ * first and over the text as written, so none of these shows what it masked before.
+ */
+export const clipShown = (text: string, max: number): string => clipFreeText(redact(text), max);
 
-/** A whole text with its line breaks, redacted, held to LIMITS.fullText with the cut note after a cut. */
+/** The first 400 characters of an agent's prompt or answer, whitespace folded to single spaces. Empty for no text. */
+export const excerpt = (text?: string | null): string => (text ? clipShown(text.replace(/\s+/g, ' ').trim(), LIMITS.excerpt) : '');
+
+/**
+ * A whole text with its line breaks, redacted as it is taken (the rules cheap enough for a hook) and held as a kept text is
+ * (keptText). The free-text rules follow when the report that carries it is built (report.ts).
+ */
 export function fullText(text?: string | null): string {
-  const whole = text ? redact(text.replace(/\r\n?/g, '\n')).trim() : '';
-  return whole.length > LIMITS.fullText ? `${whole.slice(0, LIMITS.fullText)}\n\n${cutNote(LIMITS.fullText)}` : whole;
+  return text ? keptText(redact(text.replace(/\r\n?/g, '\n')).trim()) : '';
 }
+
+/**
+ * A text the record keeps at full capture, held to LIMITS.fullText (a token the cut splits dropped whole, as `cutRaw` does) with
+ * the cut note after a cut. Cut as it is taken, so what is held stays bounded; redacted only when a report carries it.
+ */
+export const keptText = (text: string): string => (text.length > LIMITS.fullText ? `${cutRaw(text, LIMITS.fullText)}\n\n${cutNote(LIMITS.fullText)}` : text);
 
 /** The last lines of what a call returned, trailing blank lines left off, each redacted as free text and held to a line. */
 function outputTail(text: string): string[] {
@@ -335,7 +363,7 @@ function folded(text: string): string {
 export const feedCall = (tool: string, input: Record<string, unknown>): string => namedCall(tool, folded(shownArgument(tool, input, true)), LIMITS.activity);
 
 /** The feed's line for the text one model request wrote; empty when it wrote only whitespace. */
-export const feedText = (text: string): string => clip(folded(text), LIMITS.activity);
+export const feedText = (text: string): string => clipShown(folded(text), LIMITS.activity);
 
 /** A loop's last failing call: what its failure is blamed on if the loop ends failed soon after. */
 export interface FailureCandidate {
@@ -355,13 +383,48 @@ export interface FailureCandidate {
 /** What a tool call's `next(e)` resolves to, as the reporter reads it. */
 export type CallResult = { deny?: string; isError?: boolean; text?: string; result?: unknown };
 
-/** A candidate from a call that a permission decision refused (its reason as the output) or that errored; null for one that succeeded. */
+/** A failed Bash call's text starts with Claude Code's own status line, such as `Exit code 1`. */
+export const EXIT_LINE = /^Exit code (-?\d{1,3})(?:\n|$)/;
+
+/** A Bash result's text without that status line: what the command itself printed. Its code is read by finishedCall. */
+export const withoutExitLine = (text: string): string => text.replace(EXIT_LINE, '');
+
+/**
+ * What Claude Code records, as an error with no flag of its own, for a call it ended unfinished: the person's Esc, a message
+ * that ended the turn, the session or its process ending, a call skipped in its batch. Claude Code's own list of them, which it
+ * reads as an interruption wherever a result starts with one (2.1.330, `gze` and `rg`), each by its opening words.
+ */
+const STOPPED_TEXT = [
+  '[Request interrupted by user]',
+  '[Request interrupted by user for tool use]',
+  '[Request interrupted: the session ended',
+  '[This turn ended before it finished.]',
+  '[Agent call interrupted:',
+  '[Tool call did not complete: the turn was ended',
+  '[Tool call interrupted:',
+  '[Tool call result not in this copy:',
+  "The user doesn't want to take this action right now.",
+  '[Tool call skipped: the turn was stopped',
+  '[Tool call skipped: the turn ended to deliver',
+];
+
+/**
+ * Whether Claude Code ended a call unfinished (STOPPED_TEXT) rather than the call running to its end: neither a failure nor a
+ * success. A stopped Bash call's text has Claude Code's status line first (`Exit code 137`, observed on 2.1.330), then the sentence.
+ */
+export function toolStopped(result: CallResult | null | undefined): boolean {
+  if (result?.isError !== true) return false;
+  const text = withoutExitLine([result.text, result.result].find((v): v is string => typeof v === 'string') ?? '');
+  return STOPPED_TEXT.some((s) => text.startsWith(s));
+}
+
+/** A candidate from a call that a permission decision refused (its reason as the output) or that errored; null for one that succeeded or was stopped. */
 export function failingCall(tool: string, input: Record<string, unknown>, result: CallResult, at: number): FailureCandidate | null {
   if (typeof result.deny === 'string') {
     const denyText = clipFreeText(result.deny.replace(/\s+/g, ' ').trim(), LIMITS.line);
     return { at, tool, call: callLine(tool, input), exitCode: null, outputTail: outputTail(result.deny), denied: true, denyText };
   }
-  if (result.isError !== true) return null;
+  if (result.isError !== true || toolStopped(result)) return null;
   const text = [result.text, result.result].find((v): v is string => typeof v === 'string') ?? '';
   return { at, tool, call: callLine(tool, input), exitCode: statedExitCode(text), outputTail: outputTail(text), denied: false, denyText: null };
 }

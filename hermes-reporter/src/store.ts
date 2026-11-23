@@ -79,6 +79,27 @@ export interface StoredAgent {
   turn: LastTurn | null;
 }
 
+/** One `messages` row as the record reads it (`hermes_state_common.py:430-455`), its time in epoch ms. */
+export interface StoredMessage {
+  id: number;
+  /** The session it belongs to: the reported one, or one of its subagent runs. */
+  sessionId: string;
+  role: string | null;
+  /** Its `timestamp` (epoch seconds) exactly as the store holds it, part of its identity (rowsOf), and that time in epoch ms. */
+  stamp: number;
+  at: number;
+  toolName: string | null;
+  toolCallId: string | null;
+  finishReason: string | null;
+  /** An assistant message's calls, as Hermes stores them (JSON), for their fingerprints. */
+  toolCalls: string | null;
+  /** Its session's model. */
+  model: string | null;
+  /** Its `content` and `reasoning`, read only at full capture (up to ROW_TEXT characters each); null otherwise. */
+  content: string | null;
+  reasoning: string | null;
+}
+
 /** A session's usage: the whole tree's per model (the session's own and its subagents'), and each session's own. */
 export interface TreeUsage {
   total: ModelTokens[];
@@ -105,9 +126,10 @@ const TREE = `tree(id) AS (
 /**
  * The sessions to report: the rows `hermes sessions list` shows, less its compression projection (`hermes_cli/sessions_cmd.py:
  * 325-334`, `list_sessions_rich` `hermes_state.py:9973-10015`): not a delegated subagent's run, not a third-party `tool`
- * session, not archived or hidden. Of those, each one whose last activity is inside Hermes's window (`?1`, ACTIVE_WINDOW_MS
- * ago), each whose usage (its own or a subagent's) Hermes wrote inside it (`spent`), and each in `?2` (a JSON array of ids still
- * followed). Hermes stamps a usage row's `last_seen` at every write and touches no activity with it (`_record_model_usage`,
+ * session, not archived or hidden. Of those, each one whose last activity is since `?1`, each whose usage (its own or a
+ * subagent's) Hermes wrote since then (`spent`), and each in `?2` (a JSON array of ids still followed). `?1` is Hermes's window,
+ * ACTIVE_WINDOW_MS ago, and one window earlier on a reporter's first pass; whether a session is active is always judged
+ * against Hermes's window, `?3`. Hermes stamps a usage row's `last_seen` at every write and touches no activity with it (`_record_model_usage`,
  * `hermes_state.py:8756-8797`), so `spent` is what shows usage written after a session's last activity, such as compression usage
  * written after a gateway chat ended. A compression continuation is reported as its own session: Hermes lists the continuation's
  * id for the conversation (`hermes_state.py:10215-10262`), and the segment it continues has ended.
@@ -120,7 +142,7 @@ WITH RECURSIVE spent(id) AS (
 ),
 kept(id) AS (SELECT id FROM spent UNION SELECT value FROM json_each(?2))
 SELECT id, source, model, title, started_at, ended_at, end_reason, cwd, git_repo_root, last_active,
-       ended_at IS NULL AND last_active > ?1 AS active
+       ended_at IS NULL AND last_active > ?3 AS active
   FROM (SELECT s.id, s.source, s.model, s.title, s.started_at, s.ended_at, s.end_reason, s.cwd, s.git_repo_root,
                ${LAST_ACTIVE('s')} AS last_active
           FROM sessions s
@@ -131,8 +153,12 @@ SELECT id, source, model, title, started_at, ended_at, end_reason, cwd, git_repo
 /** The session's last message, as `session_lifecycle_statuses` takes it: the row with the highest id (`hermes_state.py:10298-10309`). */
 const LAST_MESSAGE = `SELECT id, timestamp, role, tool_calls IS NOT NULL AS calls, finish_reason FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 1`;
 
-/** The session's first user message, in the order Hermes's list preview takes it (`hermes_state.py:10124-10128`). */
-const FIRST_PROMPT = `SELECT content FROM messages WHERE session_id = ? AND role = 'user' AND content IS NOT NULL ORDER BY timestamp, id LIMIT 1`;
+/**
+ * The session's first user message, in the order Hermes's list preview takes it (`hermes_state.py:10124-10128`), a compaction
+ * summary never (Hermes's preview passes over it, `hermes_state_common.py:128-137`; the record's rows, ROWS).
+ */
+const FIRST_PROMPT = `SELECT content FROM messages WHERE session_id = ? AND role = 'user' AND content IS NOT NULL
+   AND _compressed_summary IS NOT 1 ORDER BY timestamp, id LIMIT 1`;
 
 /** The session's subagent runs (TREE less the session itself), oldest first, each with its last message as LAST_MESSAGE takes it. */
 const AGENTS = `
@@ -169,6 +195,36 @@ SELECT session_id, model, SUM(i) AS input, SUM(o) AS output, SUM(cr) AS cacheRea
  GROUP BY session_id, model
 HAVING SUM(i) + SUM(o) + SUM(cr) + SUM(cw) > 0
  ORDER BY model`;
+
+/** Messages one pass reads of a session's record, and characters of a message's text it takes (a kept text and one more). */
+const ROWS_READ = 500;
+const ROW_TEXT = 20_001;
+
+/**
+ * The record's messages of `?1`'s session and every subagent run under it (TREE), after message `?2`, in id order, at
+ * most `?3`; its text only when `?4` (full capture): otherwise `content` and `reasoning` are not read at all. `tool_calls` is read
+ * for the calls' fingerprints. Each session's rows are reached through Hermes's own `(session_id, id)` index
+ * (`hermes_state_common.py:537`). A compaction's summary (`_compressed_summary`, `hermes_state.py:10582-10678`) is not read:
+ * it starts no run of the loop and makes no request of the session's model (rowsOf).
+ */
+const ROWS = `
+WITH RECURSIVE ${TREE}
+SELECT m.id, m.session_id, m.role, m.timestamp, m.tool_name, m.tool_call_id, m.finish_reason, m.tool_calls, s.model,
+       CASE WHEN ?4 THEN substr(m.content, 1, ${String(ROW_TEXT)}) END AS content,
+       CASE WHEN ?4 THEN substr(m.reasoning, 1, ${String(ROW_TEXT)}) END AS reasoning
+  FROM messages m JOIN sessions s ON s.id = m.session_id
+ WHERE m.session_id IN tree AND m.id > ?2 AND m._compressed_summary IS NOT 1
+ ORDER BY m.id LIMIT ?3`;
+
+/**
+ * The first message of `?1`'s session and its subagent runs (TREE) stamped after `?2` (epoch seconds): where the record of a
+ * session first read now begins (rowsOf). It ranges over Hermes's own `(session_id, timestamp)` index
+ * (`hermes_state_common.py:536`), so only the window's messages are visited; `+m.id` keeps SQLite from answering MIN by walking
+ * the `(session_id, id)` index from the session's first message instead (sqlite.org/optoverview.html, the unary "+").
+ */
+const FIRST_SINCE = `
+WITH RECURSIVE ${TREE}
+SELECT MIN(+m.id) AS id FROM messages m WHERE m.session_id IN tree AND m.timestamp > ?2`;
 
 type Row = Record<string, unknown>;
 const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
@@ -217,9 +273,12 @@ export class HermesStore {
     this.db = null;
   }
 
-  /** The sessions to report now (SESSIONS): active or with usage written since `since` (epoch ms), and those in `followed`. */
-  sessions(since: number, followed: readonly string[]): StoredSession[] {
-    const rows = this.run(SESSIONS).all(since / 1000, JSON.stringify(followed)) as Row[];
+  /**
+   * The sessions to report now (SESSIONS): active or with usage written since `since` (epoch ms), and those in `followed`. A
+   * session counts as active by Hermes's window, `activeSince`, however far back `since` reaches.
+   */
+  sessions(since: number, followed: readonly string[], activeSince = since): StoredSession[] {
+    const rows = this.run(SESSIONS).all(since / 1000, JSON.stringify(followed), activeSince / 1000) as Row[];
     return rows.flatMap((r): StoredSession[] => {
       const id = str(r.id);
       const startedAt = ms(r.started_at);
@@ -276,6 +335,38 @@ export class HermesStore {
         },
       ];
     });
+  }
+
+  /** The session's record after message `after` (ROWS), at most ROWS_READ, oldest first; `full`: with their text. */
+  messages(id: string, after: number, full: boolean): StoredMessage[] {
+    const rows = this.run(ROWS).all(id, after, ROWS_READ, full ? 1 : 0) as Row[];
+    return rows.flatMap((r): StoredMessage[] => {
+      const sessionId = str(r.session_id);
+      const at = ms(r.timestamp);
+      if (!Number.isInteger(r.id) || sessionId === null || at === null) return [];
+      return [
+        {
+          id: r.id as number,
+          sessionId,
+          role: str(r.role),
+          stamp: r.timestamp as number,
+          at,
+          toolName: str(r.tool_name),
+          toolCallId: str(r.tool_call_id),
+          finishReason: str(r.finish_reason),
+          toolCalls: str(r.tool_calls),
+          model: str(r.model),
+          content: str(r.content),
+          reasoning: str(r.reasoning),
+        },
+      ];
+    });
+  }
+
+  /** The id of the session's first message stamped after `since` (epoch ms), FIRST_SINCE; null when it has none. */
+  firstSince(id: string, since: number): number | null {
+    const r = this.run(FIRST_SINCE).get(id, since / 1000) as Row | undefined;
+    return Number.isInteger(r?.id) ? (r!.id as number) : null;
   }
 
   /** Whole-life tokens per model (USAGE) of the session's tree and of each of its sessions; empty where Hermes has recorded none. */

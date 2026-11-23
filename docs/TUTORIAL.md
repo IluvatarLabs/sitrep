@@ -1,6 +1,6 @@
-# Tutorial
+# Tour
 
-A tour of the dashboard. A simulator stands in for the agents.
+Every view of the dashboard. A simulator stands in for the agents.
 
 ## Start it
 
@@ -16,9 +16,11 @@ npx tsx scripts/sim.ts --sessions 12 --codex 0.5 --machines 3 --seed 7
 ```
 
 Add `--chaos` to make some sessions stall, fail or go silent, so every state shows up. Reading needs no sign-in. To
-answer, rename or change settings, sign in (top right) with the server's admin secret. Under `npm run dev` there is one
+answer, rename or change settings, sign in (top right) with a name and the server's admin secret. Under `npm run dev` there is one
 only if a `.env` file at the repository root sets `SITREP_TOKEN`, and then the simulator needs the same variable in its
-environment.
+environment. Without one there is nothing to sign in to, and what needs a sign-in is not offered.
+
+The dashboard is a desktop page, laid out for a window 1,440 px wide or more.
 
 ## The Fleet
 
@@ -82,6 +84,18 @@ At the foot is the message box (a message, `/clear` or `/compact`); a session th
 simulator's, reads "Answer in its terminal" instead. An open question, permission or plan shows first, with its
 answer.
 
+![A session's turns](tutorial/12-session-turns.png)
+
+The switch over the agents has a third view, **Turns**: the session's record, newest turn first. Each turn opens to
+its model requests and tool calls in order: when, how long, which model and how many tokens, how each call ended. A
+kept prompt that reads as frustration, or as a correction after the session's first turn, is marked so, with the words that
+matched. A
+row opens to its detail and its feedback, and a failed call links to its issue. On a machine set to full capture a
+row also has its text, shown signed in ([The record](OPERATIONS.md#the-record)).
+
+Signed in, **Add feedback** puts a tag, a score or a value, and a comment on the session or on one row. While a
+session needs someone, **Claim** tells everyone "Claimed by" and your name; it restricts nothing.
+
 ## Machines
 
 ![Machines](tutorial/08-machines.png)
@@ -94,22 +108,53 @@ exports) and the commands that fix them. **Remove** and **Remove silent** take m
 
 **Add a machine** (the sidebar's "+") gives the commands to set one up, for its OS, each with Copy.
 
-## Settings and History
+## Settings
 
 ![Settings](tutorial/10-settings.png)
 
-Server settings (answering, the activity feed, stuck thresholds, timers, retention) apply at once. Prices shows what
-each model costs, long-context and fast-mode lines included. This browser holds the theme, notifications, refresh rates, Animation
-and the keys.
+Server settings (answering, the activity feed, the record of turns and calls, stuck thresholds, timers, retention)
+apply at once. Prices shows what each model costs, long-context and fast-mode lines included. This browser holds the
+theme, notifications, refresh rates, Animation and the keys.
+
+## History
 
 ![History](tutorial/11-history.png)
 
-Ended sessions by day, each with its session id to copy. Each opens read-only, and Delete removes one.
+Ended sessions by day, or over a range of days when you set the second date. Each has its session id to copy, its
+turns, tool calls and failed calls, and your feedback. Each opens read-only, and Delete removes one.
+
+![History grouped by model](tutorial/13-history-group-by-model.png)
+
+**Group by** turns the list into one row a group (day, week, model, harness version, project, machine or feedback)
+with its sessions, typical duration, cost, turns and tool calls, and the share of calls that failed.
+
+![Compare](tutorial/14-compare.png)
+
+**Compare:** tick two or more sessions and they are set side by side, the first ticked as the baseline, each other one
+with its difference from it.
+
+**Search:** the top bar's filter narrows the list, and its plain words search each session's name, its Activity, its
+agents' prompts, answers and failures and, signed in, its kept text. A match outside the name shows under it, and one
+in kept text opens the session at that row.
+
+**Export**, signed in, downloads every session in the range and filter, with its record and feedback, as JSONL.
+
+## Issues
+
+![Issues](tutorial/15-issues.png)
+
+History's second view. The same error failing a tool call in two or more sessions is one issue, listed with its tool,
+its sessions and calls, and when it was first and last seen; the open ones come first, and one control adds the
+closed ones, another those seen in a single session. An issue opens to its newest kept input and output, where you may
+read kept text, and its occurrences, each a link to the failing call. Signed in you can claim it, close it as resolved or as incorrectly flagged with a reason, and reopen it; one
+closed as resolved opens again by itself if the error comes back. **Copy brief** copies the issue as Markdown, to hand
+to an agent.
 
 ## Filter and keys
 
 The filter in the top bar matches plain words against a session's name, project, branch and machine. A prefix narrows
-one field: `s:` state, `m:` machine, `p:` project, `h:` harness.
+one field: `s:` state, `m:` machine, `p:` project, `h:` harness. On History `s:` does nothing (every session there has
+ended), and the field also takes `model:`, `tool:`, `end:` (how a session ended) and `fb:` (a feedback tag).
 
 | Key | What it does |
 |---|---|

@@ -587,8 +587,14 @@ body.shell-resizing * {
   border: 1px solid var(--control);
   border-radius: var(--r-control);
 }
-/* Off the pages that apply it: its place kept, so nothing after it moves; unseen, out of the tab order and unread. */
+/* Off the pages that apply it: its place kept, so nothing after it moves; unseen, out of the tab order and unread. The same
+   while History shows anything but its list of sessions, which is all a word of it narrows: its Issues, and a stored
+   session's page or a comparison, each under History's "Back to" link (.hs-back). A rule of its own, so a browser that cannot
+   read it keeps the first. */
 .shell-filter.is-off {
+  visibility: hidden;
+}
+.shell:has(.hs-issues, .hs-back) .shell-filter {
   visibility: hidden;
 }
 .shell-filter:focus-within {
@@ -645,6 +651,16 @@ body.shell-resizing * {
 .shell-signin svg.i {
   width: 12px;
   height: 12px;
+}
+/* In Sign in's place on a server with no admin secret (components/SignIn NoSecretNote): one quiet line, which ends in "…" where
+   the bar has no room for it; whole on hover. */
+.shell-open {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--t-xs);
+  color: var(--ink-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* While the top bar is folded away: at the main view's top right, clear of the inspector's head. */
 .shell-show-top {

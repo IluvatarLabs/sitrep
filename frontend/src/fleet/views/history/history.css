@@ -15,39 +15,57 @@
 .hs-pick-field { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; pointer-events: none; }
 .hs-back { margin-bottom: var(--s3); font-size: var(--t-sm); }
 
-/* The day's table in its own frame. Every column but Session has a fixed width (616 px, 704 with Delete), and Session (the
-   name over its project) takes the rest: 200 px at the table's minimum (136 px with Delete, so the table fits signed in beside
-   both panes at 1440 px, 888 px less the view's padding), up to 420 px; past that End reason takes the rest instead, so a wide
-   pane leaves no dead gap after the names. Below the minimum the frame scrolls sideways inside itself, the Session column
-   staying in place (separate borders keep each cell's rule on it as it sticks). Every line keeps to one line, cut with an
-   ellipsis and said whole on hover. */
+/* A table in its own frame: the range's sessions, their groups, a comparison, the issues. Below its minimum the frame scrolls
+   sideways inside itself, the first column staying in place, and the Session column beside its tick (separate borders keep
+   each cell's rule on it as it sticks). Every line keeps to one line, cut with an ellipsis and said whole on hover. */
 .hs-scroll { container: hs / inline-size; position: relative; max-width: 100%; overflow-x: auto; }
 .hs-table { width: 100%; min-width: 816px; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: var(--t-sm); line-height: var(--lh-sm); }
-.hs-table.hs-can-delete { min-width: 840px; }
 .hs-table th, .hs-table td { overflow: hidden; padding: var(--s1) var(--s2); border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; white-space: nowrap; }
-.hs-table tr > :first-child { position: sticky; left: 0; z-index: 1; background: var(--sheet); }
+.hs-table tr > :first-child, .hs-tick + * { position: sticky; left: 0; z-index: 1; background: var(--sheet); }
+.hs-tick + * { left: 28px; }
+.hs-table input[type="checkbox"] { margin: 2px 0 0; accent-color: var(--ink); }
 .hs-w-model { width: 136px; }
-.hs-w-ended { width: 56px; }
 .hs-w-dur { width: 72px; }
-.hs-w-cost { width: 72px; }
 .hs-w-blow { width: 104px; }
 .hs-w-agents { width: 64px; }
 .hs-w-end { width: 112px; }
-.hs-w-act { width: 88px; }
-/* The fixed columns and a 420 px Session. */
-@container hs (min-width: 1036px) {
-  .hs-table:not(.hs-can-delete) .hs-w-session { width: 420px; }
-  .hs-table:not(.hs-can-delete) .hs-w-end { width: auto; }
+/* The sessions' list (.hs-list) is fourteen columns, signed in, and has to fit a frame of 1,144 px (a 1728 px window with both
+   panes open) with 220 px left for Session: so its cells are 12 px apart, not 16, and its fixed columns have their own, narrower
+   widths. A heading that does not fit wraps (Auto-compacts), and in a range of days Ended says its day too, over its time
+   (.hs-w-day, .hs-when). The fixed columns come to 800 px (880 with Delete; 40 more in a range), and Session (the name over
+   its project) takes the rest: 200 px at the table's minimum, up to 420 px (380 in a range); past that End reason takes the
+   rest instead, so a wide pane leaves no dead gap after the names. */
+.hs-list { min-width: 1000px; }
+.hs-list.hs-can-delete, .hs-list.hs-range { min-width: 1080px; }
+.hs-list.hs-range.hs-can-delete { min-width: 1120px; }
+.hs-list :is(th, td) { padding-inline: calc(var(--s3) / 2); }
+.hs-list thead th, .hs-list .hs-when { white-space: normal; }
+.hs-w-tick { width: 28px; }
+.hs-list .hs-w-model { width: 120px; }
+.hs-w-ended, .hs-list .hs-w-agents { width: 52px; }
+.hs-w-day, .hs-list .hs-w-end { width: 92px; }
+.hs-list .hs-w-dur, .hs-w-cost, .hs-w-calls { width: 68px; }
+.hs-list .hs-w-blow { width: 72px; }
+.hs-w-fb { width: 76px; }
+.hs-w-act { width: 80px; }
+/* Those columns and a 420 px Session. */
+@container hs (min-width: 1220px) {
+  .hs-list:not(.hs-can-delete) .hs-w-session { width: 420px; }
+  .hs-list:not(.hs-can-delete) .hs-w-end { width: auto; }
+  .hs-range:not(.hs-can-delete) .hs-w-session { width: 380px; }
 }
-@container hs (min-width: 1124px) {
+@container hs (min-width: 1300px) {
   .hs-can-delete .hs-w-session { width: 420px; }
   .hs-can-delete .hs-w-end { width: auto; }
+  .hs-range.hs-can-delete .hs-w-session { width: 380px; }
 }
 .hs-table thead th { color: var(--muted); font-size: var(--t-xs); font-weight: 400; line-height: var(--lh-xs); }
 .hs-table tbody th { font-weight: 400; }
 .hs-table .sv-n { text-align: right; }
 .hs-table tbody tr:hover > * { background: var(--band); }
 .hs-cut { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Cut from the front, as .hs-proj is: right to left puts the ellipsis there, and the cell's bdi keeps its order. */
+.hs-front { direction: rtl; text-align: left; }
 /* A session's name reads as a link on hover only, so the column is not a wall of underlines. */
 .hs-table .hs-name { display: block; max-width: 100%; font-weight: 600; text-align: left; text-decoration: none; }
 .hs-table .hs-name:hover { text-decoration: underline; text-decoration-color: var(--ink); }
@@ -57,6 +75,11 @@
 .hs-why { display: block; }
 .hs-table .hs-lin { display: block; max-width: 100%; color: var(--ink-2); font-size: var(--t-xs); }
 .hs-table .hs-act { vertical-align: middle; text-align: right; }
-/* A delete's confirmation, in a full-width row under its session. */
+/* A delete's confirmation, in a full-width row under its session; and an open issue under its row (Issues.tsx): its last
+   close, what a reader can do, the first lines of its newest kept input and output, its occurrences. The kept texts are drawn
+   as Turns draws a row's first lines (session.css .tn-texts), which there start under a line's name: here they start where the
+   rest of the issue does. */
 .hs-table .hs-confirm > td { padding: var(--s2) var(--s4); white-space: normal; }
 .hs-confirm > td > * + * { margin-left: var(--s2); }
+.hs-issue { display: grid; gap: var(--s2); }
+.hs-issue .tn-texts { padding: 0; }

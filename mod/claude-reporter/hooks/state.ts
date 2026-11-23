@@ -4,11 +4,12 @@
 // each SendMessage call starts. A reducer never changes the state it is given; it returns a new one. Nothing here
 // calls `$` or draws.
 import type { ClassicEventOf, TurnCompleteReason, TurnUsage } from 'claude-code';
-import { clip, clipCall, clipFreeText, evidenceLines, excerpt, failingCall, failureClass, failureRecord, fullText, type CallResult, type FailureCandidate } from './failures.ts';
+import { finishedCall } from './activityDetail.ts';
+import { clip, clipCall, clipFreeText, clipShown, evidenceLines, excerpt, failingCall, failureClass, failureRecord, fullText, keptText, toolStopped, withoutExitLine, type CallResult, type FailureCandidate } from './failures.ts';
 import { lastSegment, resolvePath } from './git.ts';
 import { shortName, windowOf } from './models.ts';
 import { emptyPlan, setTitle, taskCreate, taskUpdate, todoWrite, withOwners, type PlanState } from './plan.ts';
-import { backgroundSummary, EFFORTS, LIMITS, MAIN_LOOP, type ActivityEntry, type ActivityEvent, type AgentReport, type AgentStatus, type BackgroundKind, type BackgroundTask, type BackgroundWait, type ContextFill, type Effort, type FilesReport, type GitInfo, type RateLimit } from './protocol.ts';
+import { backgroundSummary, callHash, EFFORTS, errorKey, LIMITS, MAIN_LOOP, type ActivityEntry, type ActivityEvent, type AgentReport, type AgentStatus, type BackgroundKind, type BackgroundTask, type BackgroundWait, type ContextFill, type Effort, type FilesReport, type GitInfo, type RateLimit, type RowText, type ToolOutcome, type TraceRow } from './protocol.ts';
 import { toolDenied } from './respond.ts';
 
 /** Two blowout signals on one loop this close together (a window-exceeded stop and the compaction it sets off) count once. */
@@ -404,7 +405,7 @@ function backgroundTask(t: BackgroundInput['tasks'][number]): BackgroundTask | n
 export function setBackground(s: SessionState, listed: BackgroundInput, now: number): SessionState {
   const tasks = listed.tasks.map(backgroundTask).filter((t) => t !== null).slice(0, BACKGROUND_KEPT);
   const wakeups = listed.crons.slice(0, BACKGROUND_KEPT - tasks.length);
-  for (const c of wakeups) tasks.push({ type: 'wakeup', description: clip((c.prompt ?? '').replace(/\s+/g, ' ').trim() || 'scheduled wake-up', BACKGROUND_DESC), status: 'scheduled' });
+  for (const c of wakeups) tasks.push({ type: 'wakeup', description: clipShown((c.prompt ?? '').replace(/\s+/g, ' ').trim(), BACKGROUND_DESC) || 'scheduled wake-up', status: 'scheduled' });
   // A wake-up whose time cannot be read may be the first to fire, so then no time is given rather than a wrong one.
   const fireTimes = wakeups.map((c) => c.nextAt);
   const wakeAt = fireTimes.length > 0 && fireTimes.every((t): t is number => typeof t === 'number') ? Math.min(...fireTimes) : null;
@@ -791,8 +792,9 @@ function messageSent(s: SessionState, from: string | null, input: Record<string,
   const { to, message } = input;
   if (typeof to !== 'string' || to.trim() === '' || typeof message !== 'string' || message.trim() === '') return null;
   const loop = recipientLoop(s, from, to.trim());
-  const toName = excerpt(to, LIMITS.short);
-  // The message is a tool's free-text argument: the broader rules, then the narrow ones.
+  // A name: the narrow rules, so it reads as the call spells it.
+  const toName = clip(to.replace(/\s+/g, ' ').trim(), LIMITS.short);
+  // The message is a tool's free-text argument: the free-text rules (clipFreeText).
   return { text: clipFreeText(message.replace(/\s+/g, ' ').trim(), LIMITS.text), data: loop === undefined ? { toName } : { to: loop, toName } };
 }
 
@@ -839,8 +841,8 @@ function afterSuccess(s: SessionState, call: ToolResultInput, now: number): Sess
 /** A tool call finished: counts, the failure candidate and run of failures, skills and the plan. */
 export function toolResult(state: SessionState, call: ToolResultInput, now: number): SessionState {
   const ok = typeof call.result.deny !== 'string' && call.result.isError !== true;
-  // A failure is an errored result that no permission decision caused; a denied call neither fails nor succeeds.
-  const failed = !ok && !toolDenied(call.result);
+  // A failure is an errored result that no permission decision or Esc caused; a denied or stopped call neither fails nor succeeds.
+  const failed = !ok && !toolDenied(call.result) && !toolStopped(call.result);
   const loop = loopFor(state, call.agentId);
   const s = pastPermission(loop ? withLoop(state, call.agentId, countedCall(loop, call, ok, failed, now)) : state, call.agentId);
   return ok ? afterSuccess(s, call, now) : s;
@@ -925,6 +927,60 @@ export function patchFeedEntry(s: SessionState, agentId: string | null | undefin
 export function addFeedEntry(s: SessionState, agentId: string | null | undefined, entry: ActivityEntry): SessionState {
   const loop = isWatched(s, agentId) ? loopFor(s, agentId) : undefined;
   return loop ? withLoop(s, agentId, { ...loop, activity: [...loop.activity, entry].slice(-ACTIVITY_KEPT) }) : s;
+}
+
+// ---- the record ---------------------------------------------------------------------------------------------------------
+
+/** `row` with the texts full capture keeps, each cut as it is taken (keptText); a missing or empty one is left out. */
+export function withText(row: TraceRow, text: RowText): TraceRow {
+  const parts = Object.entries(text).flatMap(([part, t]): [string, string][] => (t ? [[part, keptText(t)]] : []));
+  return parts.length > 0 ? { ...row, text: Object.fromEntries(parts) } : row;
+}
+
+/**
+ * A model request's row: the model that answered where its usage names one, else the one asked; the effort asked, as text;
+ * its token counts, null without usage or with a count left out (never 0 for one); and why it stopped.
+ */
+export function requestRow(id: string, i: StepInput, t0: number, t1: number): TraceRow {
+  const u = i.usage;
+  const counts = u && { input: u.input_tokens, output: u.output_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens };
+  const tokens = counts && Object.values(counts).every(Number.isFinite) ? counts : null;
+  const effort = typeof i.effort === 'string' || typeof i.effort === 'number' ? String(i.effort) : null;
+  return { id, kind: 'request', agentId: i.agentId ?? null, t0, t1, model: u?.model || i.model || null, effort, tokens, stop: i.stopReason };
+}
+
+/** A tool call that ended, as its row is made: its own arguments as JSON (as they are hashed), when it started, and what its `next(e)` resolved to, null when it threw. */
+export interface CallEnd {
+  id: string;
+  agentId?: string;
+  tool: string;
+  args: string;
+  t0: number;
+  result: CallResult | null;
+  /** A permission decision refused it (toolDenied, which knows the dashboard's own Deny by the message it sent). */
+  denied: boolean;
+}
+
+/**
+ * A tool call's row: interrupted when it threw, else denied, interrupted where a Bash call's own result record says so (its
+ * `interrupted` flag, read before the error flag an interrupt also sets) or where the result is Claude Code's own sentence for
+ * a stopped call (toolStopped; read as failed, every Esc would be an issue), failed on an error result, or ok; the exit code a failed Bash call's text states (finishedCall); its call
+ * hash. With it, a failed call's issue key (errorKey), whose SHA-256 the caller makes its errorHash, and the texts full capture
+ * keeps: the arguments, and the result as the model read it.
+ */
+export function callRow(c: CallEnd, t1: number): { row: TraceRow; key: string | null; text: RowText } {
+  const res = c.result;
+  const said = res === null ? undefined : [res.text, res.deny, res.result].find((v): v is string => typeof v === 'string');
+  const cutShort =
+    (c.tool === 'Bash' && (res?.result as { interrupted?: unknown } | null | undefined)?.interrupted === true) ||
+    toolStopped(res);
+  const outcome: ToolOutcome = res === null ? 'interrupted' : c.denied ? 'denied' : cutShort ? 'interrupted' : res.isError === true ? 'failed' : 'ok';
+  // A Bash call's exit code is its own field: the status line that states it is no part of what the command printed, so it
+  // neither names the call's issue nor makes one of a command that failed and printed nothing.
+  const output = c.tool === 'Bash' && said !== undefined ? withoutExitLine(said) : said;
+  const exit = c.tool === 'Bash' && res !== null ? (finishedCall(res).exitCode ?? null) : null;
+  const row: TraceRow = { id: c.id, kind: 'tool', agentId: c.agentId ?? null, t0: c.t0, t1, tool: c.tool, outcome, exit, callHash: callHash(c.tool, c.args), errorHash: null };
+  return { row, key: outcome === 'failed' ? errorKey(c.tool, output ?? '', c.tool === 'Bash') : null, text: { input: c.args, output } };
 }
 
 // ---- usage, end ---------------------------------------------------------------------------------------------------------

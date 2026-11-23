@@ -17,7 +17,7 @@
     "cwd": "/Users/dev/billing-service/.claude/worktrees/invoice-v2",
     "projectRoot": "/Users/dev/billing-service",
     "repoName": "acme/billing-service",
-    "git": { "branch": "refactor/invoice-v2", "detached": false, "isWorktree": true, "worktreePath": "/Users/dev/billing-service/.claude/worktrees/invoice-v2", "ahead": 7, "behind": 0, "dirty": 3 },
+    "git": { "branch": "refactor/invoice-v2", "detached": false, "isWorktree": true, "worktreePath": "/Users/dev/billing-service/.claude/worktrees/invoice-v2", "ahead": 7, "behind": 0, "dirty": 3, "commit": "3f2a9c1e5b7d4a6f8e0c1b2d3a4f5e6d7c8b9a0f" },
     "model": "claude-opus-5-5",
     "effort": "xhigh",
     "context": { "tokens": 410000, "window": 1000000, "percent": 41 },
@@ -162,5 +162,10 @@
     { "id": "5f0c2a8e-1b7d-4c3e-9a51-2d6f8e0b4c11:a3:fail:1791647700000:3", "t": 1791647700000, "kind": "fail", "agentId": "a3", "text": "failed: Backfill dry run (Tool error)", "data": { "class": "Tool error" } },
     { "id": "5f0c2a8e-1b7d-4c3e-9a51-2d6f8e0b4c11:a2:edit:1791647860000:4", "t": 1791647860000, "kind": "edit", "agentId": "a2", "text": "edited export.ts", "data": { "path": "/Users/dev/billing-service/.claude/worktrees/invoice-v2/src/invoice/export.ts" } },
     { "id": "5f0c2a8e-1b7d-4c3e-9a51-2d6f8e0b4c11:a4:blow:1791647900000:5", "t": 1791647900000, "kind": "blow", "agentId": "a4", "text": "context window exceeded (blowout #2) in “Rewrite PDF renderer”", "data": { "kind": "auto-compact", "tokensBefore": 1004000, "tokensAfter": 300000 } }
+  ],
+  "rows": [
+    { "id": "0c8a41c2-7e15-4d0b-9c3a-1f5e2b7a6d90", "kind": "turn", "agentId": null, "t0": 1791645261000, "t1": null, "end": null },
+    { "id": "0c8a41c2-7e15-4d0b-9c3a-1f5e2b7a6d90:0", "kind": "request", "agentId": null, "t0": 1791645261120, "t1": 1791645263400, "model": "claude-opus-5-5", "effort": "xhigh", "tokens": { "input": 3200, "output": 410, "cacheRead": 88000, "cacheWrite": 1200 }, "stop": "tool_use" },
+    { "id": "toolu_01Hq9mVb3cY7dKx2nRt5wFzA", "kind": "tool", "agentId": null, "t0": 1791645263500, "t1": 1791645264900, "tool": "Bash", "outcome": "failed", "exit": 1, "callHash": "451dfa5d", "errorHash": "b49f46ab213d979685aca5027d5be1af2203ba6beb2eadf404cc382329292107" }
   ]
 }

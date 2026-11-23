@@ -1,17 +1,17 @@
-// The top bar, left to right: the way back to a folded sidebar, the filter field (its prefixes in its title; seen
+// The top bar, left to right: the way back to a folded sidebar, the filter field (the page's prefixes in its title; seen
 // only on the pages that apply it, filter.ts FILTERED_ROUTES), the stream's state (it opens Machines), "N need you" (it opens
 // the answer drawer on the longest wait), then Activity, display mode, the theme and Settings as icons, and Sign in, or Admin
-// with Sign out, at the far end. Icons here are our own line glyphs.
+// with Sign out, at the far end; there a server with no admin secret says it has none. Icons here are our own line glyphs.
 import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
 import { hashFor, type Route } from "../../route";
 import { IconChevron } from "../components/Icons";
-import { SignInSection } from "../components/SignIn";
+import { NoSecretNote, SignInSection } from "../components/SignIn";
 import { ADMIN_NAME } from "../respondApi";
 import type { Phase } from "../store";
 import { Station, type StationKind } from "../ui/Station";
 import { useRespond } from "../useRespond";
 import { MODES, type ModeChoice, type ThemeState } from "../useTheme";
-import { FILTER_FIELDS, FILTERED_ROUTES, type FilterField } from "./filter";
+import { FILTERED_ROUTES, filterHint } from "./filter";
 import { needYouWords } from "./Nav";
 
 // The popover attributes, which these React typings predate (React passes them through to the DOM as written).
@@ -25,8 +25,6 @@ declare module "react" {
     popovertarget?: string | undefined;
   }
 }
-
-const HINT = (Object.keys(FILTER_FIELDS) as FilterField[]).map((f) => `${f}: ${FILTER_FIELDS[f]}`).join(" · ");
 
 /** A line glyph on the 16-unit grid, drawn by ui.css's `svg.i`. */
 const glyph = (body: ReactNode) => (
@@ -107,8 +105,8 @@ function usePlacedUnder(panel: RefObject<HTMLElement>, button: RefObject<HTMLEle
 }
 
 /**
- * Sign in, or the signed-in name with Sign out, in a popover (components/SignIn). Nothing until the server has said who is in,
- * nor while it has no admin secret to sign in with: with its switches on, `me.enabled` is false only then (respondRoutes.ts).
+ * Sign in, or the signed-in name with Sign out, in a popover (components/SignIn). Nothing until the server has said who is in;
+ * and on a server with no admin secret, which has no sign-in (`me.open`), the note that says so and no control.
  */
 function SignInMenu() {
   const ctx = useRespond();
@@ -117,7 +115,8 @@ function SignInMenu() {
   const button = useRef<HTMLButtonElement>(null);
   usePlacedUnder(panel, button);
   const me = ctx?.me;
-  if (!me || (!me.signedIn && ctx.settingsOn && !me.enabled)) return null;
+  if (!me) return null;
+  if (me.open) return <NoSecretNote />;
   const label = me.signedIn ? (me.name ?? ADMIN_NAME) : "Sign in";
   return (
     <>
@@ -150,6 +149,7 @@ interface BarProps {
 
 export function Bar({ id, hidden, route, sidebar, query, onQuery, stream, needYou, onNeedYou, activity, onDisplay, theme }: BarProps) {
   const hintId = useId();
+  const hint = filterHint(route);
   const next = MODE_WORD[MODES[(MODES.indexOf(theme.mode) + 1) % MODES.length]!];
   const themeLabel = `Theme: ${MODE_WORD[theme.mode]}. Switch to ${next}`;
   return (
@@ -160,11 +160,11 @@ export function Bar({ id, hidden, route, sidebar, query, onQuery, stream, needYo
         </button>
       ) : null}
       {/* Only where the page applies it; elsewhere unseen in its own place, so nothing after it moves, its words kept. */}
-      <div className={FILTERED_ROUTES.has(route) ? "shell-filter" : "shell-filter is-off"} role="search" title={HINT}>
+      <div className={FILTERED_ROUTES.has(route) ? "shell-filter" : "shell-filter is-off"} role="search" title={hint}>
         {glyph(<path d="M10.4 10.4 14 14M11.6 7A4.6 4.6 0 1 1 2.4 7a4.6 4.6 0 0 1 9.2 0z" />)}
         <input type="search" aria-label="Filter sessions" aria-describedby={hintId} placeholder="Filter" autoComplete="off" spellCheck={false} value={query} onChange={(e) => onQuery(e.target.value)} />
         <span id={hintId} className="ui-vh">
-          {HINT}
+          {hint}
         </span>
       </div>
       <StreamPill phase={stream} />

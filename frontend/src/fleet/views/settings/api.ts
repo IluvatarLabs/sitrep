@@ -16,5 +16,8 @@ export async function getJson<T>(path: string): Promise<T> {
   throw new Error(res.status === 404 ? "not found" : `HTTP ${res.status}`);
 }
 
+/** A read refused because this browser is not signed in: kept text answers 403 to a reader who is not (getJson's own words). */
+export const needsSignIn = (err: unknown): boolean => err instanceof Error && err.message === "HTTP 403";
+
 /** What a refused action says, for "Could not …: <this>". */
 export const failure = (err: unknown): string => (err instanceof Error ? err.message : String(err));

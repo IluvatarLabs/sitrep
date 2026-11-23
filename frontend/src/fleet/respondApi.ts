@@ -1,12 +1,12 @@
 // The browser's requests that change something: signing in and out, reading and answering an ask, a message or command, and
 // the signed-in owner's admin actions. Each carries the cross-site header and the sign-in cookie, an HttpOnly cookie
 // the page never sees; the secret typed into the form is sent once and never kept.
-import { ADMIN_BASE, type EditableSettings, type SettingsBody } from "../../../server/src/fleet/protocol";
+import { ADMIN_BASE, type Claim, type EditableSettings, type Feedback, type IssueView, type SettingsBody } from "../../../server/src/fleet/protocol";
 import type { AskDetail, DashboardCommand, RespondMe } from "./types";
 
 /** A header a page on another site cannot send without a preflight; every change carries it. */
 export const RESPOND_HEADER = "X-Sitrep-Respond";
-/** Single owner: the one name that signs in, with the admin secret. */
+/** The name a sign-in takes when none is typed, and the one shown for a sign-in that carries none. */
 export const ADMIN_NAME = "Admin";
 
 const RESPOND = "/api/fleet/respond";
@@ -45,7 +45,7 @@ const askUrl = (sessionId: string, askId: string) => `${sessionUrl(sessionId)}/a
 
 export const respondApi = {
   me: () => send<RespondMe>("GET", `${RESPOND}/me`),
-  signIn: (secret: string) => send<{ ok: true; name: string; admin: boolean }>("POST", `${RESPOND}/sign-in`, { name: ADMIN_NAME, token: secret }),
+  signIn: (name: string, secret: string) => send<{ ok: true; name: string; admin: boolean }>("POST", `${RESPOND}/sign-in`, { name: name || ADMIN_NAME, token: secret }),
   signOut: () => send<{ ok: true }>("POST", `${RESPOND}/sign-out`),
   /** Ends every sign-in the server holds, this browser's included. */
   signOutEverywhere: () => send<{ ok: true }>("POST", `${RESPOND}/sign-out-everywhere`),
@@ -75,4 +75,15 @@ export const adminApi = {
   rename: (sessionId: string, name: string | null) => send<{ ok: true }>("PUT", `${ADMIN_BASE}/sessions/${enc(sessionId)}/name`, { name }),
   /** A plain link downloads it: a GET needs only the cookie. */
   backupUrl: `${ADMIN_BASE}/backup`,
+  /** History's range and filter as JSONL, a plain link too. */
+  exportUrl: (query: string) => `${ADMIN_BASE}/export?${query}`,
+  /** Feedback on a session, or on one of its rows (`rowId`); a number is a score, anything else a value. */
+  addFeedback: (sessionId: string, body: { rowId?: string; key: string; score?: number; value?: string; comment?: string }) =>
+    send<{ ok: true; feedback: Feedback }>("POST", `${ADMIN_BASE}/sessions/${enc(sessionId)}/feedback`, body),
+  removeFeedback: (id: number) => send<{ ok: true }>("DELETE", `${ADMIN_BASE}/feedback/${id}`),
+  /** First claim wins; a 409 names who holds it (RespondError body `claim`). */
+  claimSession: (sessionId: string) => send<{ ok: true; claim: Claim }>("POST", `${ADMIN_BASE}/sessions/${enc(sessionId)}/claim`),
+  claimIssue: (key: string) => send<{ ok: true; issue: IssueView }>("POST", `${ADMIN_BASE}/issues/${enc(key)}/claim`),
+  closeIssue: (key: string, as: "resolved" | "flagged", reason: string) => send<{ ok: true; issue: IssueView }>("POST", `${ADMIN_BASE}/issues/${enc(key)}/close`, reason ? { as, reason } : { as }),
+  reopenIssue: (key: string) => send<{ ok: true; issue: IssueView }>("POST", `${ADMIN_BASE}/issues/${enc(key)}/reopen`),
 };

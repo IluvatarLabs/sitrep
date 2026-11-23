@@ -188,10 +188,10 @@ async function countUntracked(inTop: InTop, files: ChangedFile[]): Promise<void>
 
 /**
  * The files changed since the session began. `base` is the commit HEAD was at when the reporter first read the session, or
- * null on that first read (which takes HEAD, or the empty tree before the first commit). Null when a query fails, so the
- * caller keeps what it had.
+ * null on that first read (which takes HEAD, or the empty tree before the first commit). `head` is the commit HEAD is at now,
+ * in full (null before the first commit). Null when a query fails, so the caller keeps what it had.
  */
-export async function readChanges(git: Git, cwd: string, base: string | null): Promise<{ base: string; files: FilesReport } | null> {
+export async function readChanges(git: Git, cwd: string, base: string | null): Promise<{ base: string; head: string | null; files: FilesReport } | null> {
   try {
     const top = (await git(['rev-parse', '--show-toplevel'])).stdout.trim() || cwd;
     const inTop: InTop = async (args, ok = [0]) => {
@@ -228,7 +228,7 @@ export async function readChanges(git: Git, cwd: string, base: string | null): P
       removed += f.removed ?? 0;
     }
     const listed = all.slice(0, MAX_FILES).map((f) => ({ ...f, path: f.path.slice(0, PATH_CUT), from: f.from === null ? null : f.from.slice(0, PATH_CUT) }));
-    return { base: sessionStart, files: { files: listed, total: all.length, added, removed, since } };
+    return { base: sessionStart, head, files: { files: listed, total: all.length, added, removed, since } };
   } catch {
     return null;
   }

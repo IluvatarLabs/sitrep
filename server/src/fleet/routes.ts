@@ -5,7 +5,8 @@
 import express, { Router, type ErrorRequestHandler, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
 import type { Fleet } from './fleet.js';
 import { checkReporter, serverBuild, serverVersion, supportFor } from './compat.js';
-import { LIMITS, MACHINE_HEADER, MACHINE_ID, MAIN_LOOP, TOKEN_HEADER, validateReport, VIEW_GATED, type RefusalView, type Report, type ReportReply, type SettingsBody } from './protocol.js';
+import { GROUP_KEYS, HISTORY_IDS, LIMITS, MACHINE_HEADER, MACHINE_ID, MAIN_LOOP, TOKEN_HEADER, validateReport, VIEW_GATED, type GroupKey, type RefusalView, type Report, type ReportReply, type SettingsBody } from './protocol.js';
+import { FILTER_WORDS, type HistoryFilter } from './history.js';
 import { apiRequestsOf } from './telemetry.js';
 import { everyOf, type ActivityReply } from './activity.js';
 import { identify, Lockout, ownerOf, sourceAddress, type Identity } from './auth.js';
@@ -21,7 +22,7 @@ export type ServerFacts = Pick<SettingsBody['about'], 'host' | 'port' | 'allowed
 export interface FleetRouterOptions {
   /** The admin secret. While it is set, POST /report, POST /v1/logs, DELETE /sessions/:id and the reporters' answer routes need it. */
   token?: string | null;
-  /** Where the router logs. It is never given a report body, the secret, or anything the owner typed. */
+  /** Where the router logs. It is never given a report body, the secret, or anything the owner typed but the name they signed in under. */
   logger?: Logger;
   /** The wrong-sign-in counter; the router makes its own when none is given. */
   lockout?: Lockout;
@@ -104,6 +105,8 @@ function acceptReport(fleet: Fleet, token: string | null, r: Report, owner: stri
     ok: true,
     serverTime: fleet.now(),
     ackedEvents: r.events.length,
+    ackedRows: r.rows?.length ?? 0,
+    trace: fleet.settings.trace,
     sessionId: r.session.id,
     liveSessions: fleet.visibleCount(),
     serverVersion: serverVersion(),
@@ -123,6 +126,21 @@ function activityBody(fleet: Fleet, sessionId: string, loop: string, every: unkn
   return { ...fleet.activity.watch(sessionId, loop, everyOf(every)), live: true, enabled: true, serverTime };
 }
 
+/**
+ * `GET /history?ids=`'s session ids, the key once per id, in the order given and each once: 'bad' past HISTORY_IDS. One not of
+ * sessionKey's shape (a native id of up to LIMITS.id characters, `@`, a machine id) is left out, as an unknown one is.
+ */
+function sessionIds(v: unknown): string[] | 'bad' {
+  const ids = [...new Set<unknown>(Array.isArray(v) ? v : [v])];
+  if (ids.length > HISTORY_IDS) return 'bad';
+  const shaped = (id: unknown): id is string => {
+    if (typeof id !== 'string') return false;
+    const at = id.lastIndexOf('@');
+    return at > 0 && at <= LIMITS.id && MACHINE_ID.test(id.slice(at + 1));
+  };
+  return ids.filter(shaped);
+}
+
 /** A query value as machine ids, once or repeated: none when absent or empty, 'bad' unless each is a machine id. */
 function machineIds(v: unknown): string[] | 'bad' {
   if (v === undefined || v === '') return [];
@@ -130,18 +148,53 @@ function machineIds(v: unknown): string[] | 'bad' {
   return ids.every((id) => typeof id === 'string' && MACHINE_ID.test(id)) ? (ids as string[]) : 'bad';
 }
 
-/**
- * `GET /history`'s query, checked: the day (the server's `today` when none is named) with its bounds (the server's local
- * midnights), the page wanted, and the machines it is narrowed to (none: every machine).
- */
-function historyQuery(q: Request['query'], today: string): { day: string; from: number; to: number; page: number; pageSize: number; machines: string[] } | { error: string; path: string } {
-  const day = q.day === undefined || q.day === '' ? today : typeof q.day === 'string' ? q.day : '';
+type Refused = { error: string; path: string };
+
+/** The server's local midnights either side of a `YYYY-MM-DD` day named by the query's `name`. */
+function dayBounds(day: string, name: string): { from: number; until: number } | Refused {
   const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
-  if (!ymd) return { error: 'day must be YYYY-MM-DD', path: '$.query.day' };
+  if (!ymd) return { error: `${name} must be YYYY-MM-DD`, path: `$.query.${name}` };
   const [year, month, date] = ymd.slice(1).map(Number) as [number, number, number];
   const midnight = new Date(year, month - 1, date);
   // Date quietly turns 2026-02-31 into March 3rd, so a day that does not exist shows when its parts are read back.
-  if (midnight.getFullYear() !== year || midnight.getMonth() !== month - 1 || midnight.getDate() !== date) return { error: 'day is not a real date', path: '$.query.day' };
+  if (midnight.getFullYear() !== year || midnight.getMonth() !== month - 1 || midnight.getDate() !== date) return { error: `${name} is not a real date`, path: `$.query.${name}` };
+  return { from: midnight.getTime(), until: new Date(year, month - 1, date + 1).getTime() };
+}
+
+/** A filter word from the query: lower-cased and trimmed, absent when empty. */
+const word = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() !== '' ? v.trim().toLowerCase().slice(0, LIMITS.text) : undefined);
+
+/** A number from the query string, whole or not (a row's time); null when the value is absent or not a finite number. */
+const time = (v: unknown): number | null => (typeof v === 'string' && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
+
+interface HistoryQuery {
+  /** The first day and the last, the same when no range is asked, with the server's local midnights around them. */
+  day: string;
+  to: string;
+  from: number;
+  until: number;
+  page: number;
+  pageSize: number;
+  machines: string[];
+  filter: HistoryFilter;
+  group: GroupKey | null;
+}
+
+/**
+ * `GET /history`'s query, checked: the day (the server's `today` when none is named) or the range from it to `to`, the page
+ * wanted, the machines it is narrowed to (none: every machine), the filter's words, and what to group by.
+ */
+function historyQuery(q: Request['query'], today: string): HistoryQuery | Refused {
+  const day = q.day === undefined || q.day === '' ? today : typeof q.day === 'string' ? q.day : '';
+  const first = dayBounds(day, 'day');
+  if ('error' in first) return first;
+  const to = typeof q.to === 'string' && q.to !== '' ? q.to : day;
+  const last = dayBounds(to, 'to');
+  if ('error' in last) return last;
+  if (last.from < first.from) return { error: 'to must not be before day', path: '$.query.to' };
+  const group = q.group === undefined || q.group === '' ? null : GROUP_KEYS.find((g) => g === q.group);
+  if (group === undefined) return { error: `group must be one of ${GROUP_KEYS.join(', ')}`, path: '$.query.group' };
+  const filter: HistoryFilter = Object.fromEntries(FILTER_WORDS.flatMap((name) => (word(q[name]) === undefined ? [] : [[name, word(q[name])]])));
   const page = count(q.page);
   const size = count(q.pageSize);
   if (page === 0 || page === 'bad' || size === 'bad' || (size !== null && !HISTORY_PAGE.sizes.includes(size))) {
@@ -149,7 +202,7 @@ function historyQuery(q: Request['query'], today: string): { day: string; from: 
   }
   const machines = machineIds(q.machine);
   if (machines === 'bad') return { error: 'machine must be a machine id', path: '$.query.machine' };
-  return { day, from: midnight.getTime(), to: new Date(year, month - 1, date + 1).getTime(), page: page ?? 1, pageSize: size ?? HISTORY_PAGE.fallback, machines };
+  return { day, to, from: first.from, until: last.until, page: page ?? 1, pageSize: size ?? HISTORY_PAGE.fallback, machines, filter, group };
 }
 
 /** Settings' server facts when the start-up code gives none (tests). */
@@ -307,12 +360,52 @@ export function createFleetRouter(fleet: Fleet, { token = null, logger = silentL
     else refuse(res, 404, 'unknown session', '$.id');
   });
 
+  /**
+   * Kept text (a row's, an agent's whole prompt and answer, a search over either, an issue's error) is read only signed in.
+   * A server with no admin secret has no sign-in and nothing closed, so there every reader may.
+   */
+  const readsKept = (req: Request, res: Response): boolean => token === null || signIn.live(req, res);
+  const keptGate: RequestHandler = (req, res, next) => (readsKept(req, res) ? next() : refuse(res, 403, 'sign in to read kept text', '$'));
+
   // An agent's whole prompt and answer, fetched only when the UI opens them: at tens of kilobytes they stay out of the state and
   // the stream.
-  router.get('/sessions/:id/agents/:agentId/text', viewGate, (req, res) => {
+  router.get('/sessions/:id/agents/:agentId/text', viewGate, keptGate, (req, res) => {
     const texts = fleet.db.agentTexts(req.params.id, req.params.agentId);
     if (texts) res.json(texts);
     else refuse(res, 404, 'no full text for this agent', '$.agentId');
+  });
+
+  // The record. Rows are read by the page that shows them: the newest page, those stored after `after`, or the page
+  // before `before`; never in the state or the stream.
+  router.get('/sessions/:id/rows', viewGate, (req, res) => {
+    const [after, before] = [count(req.query.after), count(req.query.before)];
+    if (after === 'bad' || before === 'bad') return refuse(res, 400, 'bad query', '$.query');
+    res.json(fleet.rows(req.params.id, { ...(after === null ? {} : { after }), ...(before === null ? {} : { before }) }));
+  });
+
+  // Kept text: one row's whole (`row`), or the first characters of each text of the rows started in [from, until) (TEXT_PREVIEW).
+  router.get('/sessions/:id/text', viewGate, keptGate, (req, res) => {
+    const [from, until] = [time(req.query.from), time(req.query.until)];
+    if (typeof req.query.row === 'string' && req.query.row !== '') return void res.json({ texts: fleet.keptText(req.params.id, { row: req.query.row }) });
+    if (from === null || until === null) return refuse(res, 400, 'expected row, or from and until', '$.query');
+    res.json({ texts: fleet.keptText(req.params.id, { from, until }) });
+  });
+
+  router.get('/sessions/:id/feedback', viewGate, (req, res) => void res.json(fleet.feedback(req.params.id)));
+
+  // The issues seen in two or more sessions; `&once` adds those seen in one. `?count`: only how many are open, for the number
+  // beside History's sessions; no text is read for it.
+  router.get('/issues', viewGate, (req, res) => {
+    if (req.query.count !== undefined) return void res.json({ open: fleet.openIssues() });
+    const state = (['open', 'closed', 'all'] as const).find((s) => s === (req.query.state ?? 'open'));
+    if (state === undefined) return refuse(res, 400, 'state must be open, closed or all', '$.query.state');
+    res.json(fleet.issues(state, readsKept(req, res), req.query.once !== undefined));
+  });
+
+  router.get('/issues/:key', viewGate, (req, res) => {
+    const detail = fleet.issue(req.params.key, readsKept(req, res));
+    if (detail) res.json(detail);
+    else refuse(res, 404, 'unknown issue', '$.key');
   });
 
   // A loop's live activity (`@orchestrator` is the main loop). Each fetch takes or renews the viewer's lease for `every` seconds
@@ -338,14 +431,23 @@ export function createFleetRouter(fleet: Fleet, { token = null, logger = silentL
     res.json({ events: fleet.events(Math.min(200, Math.max(1, limit ?? 50)), { sessionId: sessionId || null, before }) });
   });
 
-  // Every day here is the server's local day, as Today and Week are; `today` is the server's today.
+  // Every day here is the server's local day, as Today and Week are; `today` is the server's today. With `ids`, the sessions named
+  // (protocol HISTORY_IDS), and every other parameter is ignored.
   router.get('/history', viewGate, (req, res) => {
+    if (req.query.ids !== undefined && req.query.ids !== '') {
+      const ids = sessionIds(req.query.ids);
+      if (ids === 'bad') return refuse(res, 400, `ids may name at most ${String(HISTORY_IDS)} sessions`, '$.query.ids');
+      return void res.json({ sessions: fleet.historySessions(ids) });
+    }
     const today = localDay(fleet.now());
     const q = historyQuery(req.query, today);
     if ('error' in q) return refuse(res, 400, q.error, q.path);
+    const range = { day: q.day, to: q.to, today };
+    const reader = readsKept(req, res);
+    if (q.group !== null) return void res.json({ ...range, ...fleet.historyGroups(q.from, q.until, q.group, q.machines, q.filter, reader) });
     // A page past the end comes back as the last page.
-    const { rows, total, page } = fleet.historyPage(q.from, q.to, q.page, q.pageSize, q.machines);
-    res.json({ day: q.day, today, sessions: rows, total, page, pageSize: q.pageSize });
+    const { rows, total, page } = fleet.historyPage(q.from, q.until, q.page, q.pageSize, q.machines, q.filter, reader);
+    res.json({ ...range, sessions: rows, total, page, pageSize: q.pageSize });
   });
 
   router.get('/health', (_req, res) => void res.json(fleet.health()));
@@ -363,7 +465,12 @@ export function createFleetRouter(fleet: Fleet, { token = null, logger = silentL
 
   const access = mountRespondRoutes(router, { fleet, token, logger, lockout: lockout ?? new Lockout(fleet.now), onSignIn, requireToken, identityOf, signIns: signIn });
   // ADMIN_BASE, below the /api/fleet mount.
-  router.use('/admin', createAdminRouter({ fleet, access, settingsBody, logger }));
+  /** History's selection as JSONL lines (Fleet.exportLines), for the signed-in export; or why the query was refused. */
+  const exportOf = (query: Request['query']): AsyncGenerator<string> | Refused => {
+    const q = historyQuery(query, localDay(fleet.now()));
+    return 'error' in q ? q : fleet.exportLines(q.from, q.until, q.machines, q.filter);
+  };
+  router.use('/admin', createAdminRouter({ fleet, access, settingsBody, logger, exportOf }));
 
   router.use((_req, res) => refuse(res, 404, 'not found', '$'));
 

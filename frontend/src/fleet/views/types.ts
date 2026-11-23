@@ -21,6 +21,8 @@ export interface ViewProps {
   sessions: SessionView[];
   /** The machine scope in force: the filter's one `m:` word, lower-cased (shell/filter scopeIn), or null. */
   scope?: string | null;
+  /** The filter field's words as typed: History sends them to the server (shell/filter historyParams). */
+  query?: string;
   /** The shared clock (epoch ms), one tick for every view. */
   now: number;
   browser: BrowserPrefs;

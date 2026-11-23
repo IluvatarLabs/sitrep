@@ -1,11 +1,12 @@
 // Problems, one of Attention's two lists, beside Needs you (NowView); its heading counts its lines: failed and stuck sessions
 // with their fact and their auto-compacts' neutral "⟲N" when they have any, stuck agents as "session › agent" with how long they
 // have been quiet (the link opens the session on that agent), and files two loops edited within 5 minutes, marked by the Graph's
-// collision diamond, not a state's mark. Auto-compacts alone never make a problem (queue.ts). One line each, the machine last.
+// collision diamond, not a state's mark. Auto-compacts alone never make a problem (queue.ts). One line each, the machine and then who claimed the session (components/Claim) last.
 // The lines scroll inside a box as tall as Needs you's, an eighth of the window, at every count (empty at 0, the heading's 0
 // saying so), so they never move the Sessions below. The words are queue.ts problemWords, which the wall view says too.
 import type { ReactNode } from "react";
 import { BlowBadge } from "../../components/Chips";
+import { Claimed } from "../../components/Claim";
 import type { State } from "../../states";
 import type { SessionView } from "../../types";
 import { Dots } from "../../ui/Dots";
@@ -61,7 +62,7 @@ function Row({ p, now, machine, sessions }: { p: Problem; now: number; machine: 
       <span className="pb-mark">
         <ProblemMark state={w.state} />
       </span>
-      <Dots className="is-oneline" items={[name, fact, p.type === "session" && p.s.blowouts?.total ? <BlowBadge key="b" n={p.s.blowouts.total} /> : null, machine]} />
+      <Dots className="is-oneline" items={[name, fact, p.type === "session" && p.s.blowouts?.total ? <BlowBadge key="b" n={p.s.blowouts.total} /> : null, machine, p.type === "session" && p.s.claim ? <Claimed key="c" claim={p.s.claim} /> : null]} />
     </li>
   );
 }

@@ -1,10 +1,10 @@
-// SessionState to Report. Pure. Every free-text field is redacted and held to its limit here,
-// so nothing leaves the machine unredacted.
-import { clip, excerpt, LIMITS } from './failures.ts';
+// SessionState to Report. Pure. Every free-text field is redacted and held to its limit here, so nothing leaves the
+// machine unredacted; the record's rows come in redacted already (transport.ts redacts each once).
+import { clip, LIMITS, redactFreeText } from './failures.ts';
 import { lastSegment } from './git.ts';
 import { windowOf } from './models.ts';
 import { planOf } from './plan.ts';
-import type { ActivityEntry, ActivityEvent, AgentReport, Ask, Failure, FilesReport, LoopReport, MachineInfo, Report, RespondInfo } from './protocol.ts';
+import type { ActivityEntry, ActivityEvent, AgentReport, Ask, Failure, FilesReport, LoopReport, MachineInfo, Report, RespondInfo, TraceRow } from './protocol.ts';
 import { withPlanOwners, type AgentState, type LoopStats, type SessionState } from './state.ts';
 
 /** What one report holds at most: events, agents, full-text and feed-summary characters, command characters (the server's
@@ -117,9 +117,9 @@ function agentBlock(a: AgentState, fullText: boolean, activity: boolean, session
     costUsdEst: null,
     ...loopBlock(a),
     blowouts,
-    // Both were excerpted when taken; held to the limit once more.
-    promptExcerpt: excerpt(a.promptExcerpt, LIMITS.excerpt),
-    answerExcerpt: excerpt(a.answerExcerpt, LIMITS.excerpt) || null,
+    // Both were excerpted, with the free-text rules, when taken; held to the limit once more by the cheap ones.
+    promptExcerpt: clip(a.promptExcerpt, LIMITS.excerpt),
+    answerExcerpt: clip(a.answerExcerpt ?? '', LIMITS.excerpt) || null,
     failure: boundedFailure(a.failure),
     ...liveness(a),
   };
@@ -130,7 +130,10 @@ function agentBlock(a: AgentState, fullText: boolean, activity: boolean, session
   return block;
 }
 
-/** Full texts past the per-report budget wait for a later report (they stay unsent); the first one always goes, however long. */
+/**
+ * Full texts past the per-report budget wait for a later report (they stay unsent); the first one always goes, however long.
+ * One that goes passes the free-text rules here, as the report is built and never in a hook: the rules a row's kept text passes.
+ */
 function fullTextsWithin(blocks: AgentReport[]): AgentReport[] {
   let spent = 0;
   const fits = (text: string | undefined): text is string => {
@@ -140,8 +143,8 @@ function fullTextsWithin(blocks: AgentReport[]): AgentReport[] {
   };
   return blocks.map(({ promptText, answerText, ...rest }) => {
     const kept: AgentReport = rest;
-    if (fits(promptText)) kept.promptText = promptText;
-    if (fits(answerText)) kept.answerText = answerText;
+    if (fits(promptText)) kept.promptText = redactFreeText(promptText);
+    if (fits(answerText)) kept.answerText = redactFreeText(answerText);
     return kept;
   });
 }
@@ -174,18 +177,26 @@ function commandsWithin(r: Report): void {
   }
 }
 
-/** Keeps the serialized report under its byte budget (a character budget does not see multi-byte text): commands go first, from the last loop's oldest entry back. */
+/**
+ * Keeps the serialized report under its byte budget (a character budget does not see multi-byte text): commands go first,
+ * from the last loop's oldest entry back, then rows from the last, which wait in their queue for the next report (the first
+ * always goes).
+ */
 function bytesWithin(r: Report): void {
   const encoder = new TextEncoder();
-  const fits = () => encoder.encode(JSON.stringify(r)).length <= PER_REPORT.bytes;
+  const size = (v: unknown) => encoder.encode(JSON.stringify(v)).length;
+  const fits = () => size(r) <= PER_REPORT.bytes;
   const feeds = feedsOf(r);
-  if (feeds.length === 0 || fits()) return;
+  const rows = r.rows ?? [];
+  if ((feeds.length === 0 && rows.length < 2) || fits()) return;
   for (const e of feeds.toReversed().flat()) {
     if (e.command === undefined) continue;
     delete e.command;
     delete e.commandCut;
     if (fits()) return;
   }
+  // A row left out takes its own bytes and the comma before it.
+  for (let over = size(r) - PER_REPORT.bytes; over > 0 && rows.length > 1; ) over -= size(rows.pop()) + 1;
 }
 
 /** The changed files as sent: every path, a rename's old one too, redacted and held to 300 characters; the counts as they are. */
@@ -241,8 +252,8 @@ function sessionBlock(s: SessionState, meta: ReportMeta): Report['session'] {
   return block;
 }
 
-/** What one post sends: the whole session as it stands now, with the first PER_REPORT.events of the events handed in. */
-export function reportOf(state: SessionState, events: readonly ActivityEvent[], meta: ReportMeta): Report {
+/** What one post sends: the whole session as it stands now, with the first PER_REPORT.events of the events handed in, and the rows handed in (none: no `rows`). */
+export function reportOf(state: SessionState, events: readonly ActivityEvent[], rows: readonly TraceRow[], meta: ReportMeta): Report {
   const s = withPlanOwners(state);
   // Should a session ever have more agents than the server takes, the newest are the ones sent.
   const agents = s.order.flatMap((agentId) => s.agents[agentId] ?? []).slice(-PER_REPORT.agents);
@@ -257,6 +268,7 @@ export function reportOf(state: SessionState, events: readonly ActivityEvent[], 
     events: events.slice(0, PER_REPORT.events).map((e) => ({ ...e, text: clip(e.text, LIMITS.text) })),
     machine: { ...meta.machine },
   };
+  if (rows.length > 0) report.rows = [...rows];
   feedsWithin(report);
   commandsWithin(report);
   bytesWithin(report);

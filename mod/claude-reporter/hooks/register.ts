@@ -13,15 +13,15 @@ import type { ClassicResultOf, EngineInterface, Register, TurnStepInput, TurnSte
 import { finishedCall, toolEntry } from './activityDetail.ts';
 import { devBuild, withBuild } from './build.ts';
 import { nextCronAt } from './cron.ts';
-import { clipFreeText, feedText, type CallResult } from './failures.ts';
+import { clipFreeText, feedText, LIMITS, type CallResult } from './failures.ts';
 import { changedFiles, gitInfo, type Runner } from './git.ts';
 import { ID_STORE_KEY, idFilePath, idFromFile, isMachineId, linuxOs, machineInfo, macOs, newMachineId, shortHost, trimTrailingSlashes, windowsOs } from './machine.ts';
 import { shortName } from './models.ts';
 import { follow, quietly, repoNameOf } from './place.ts';
-import { sessionKey, type Ask, type Delivery, type DeliveryResult, type MachineInfo, type Report, type RespondInfo, type RespondKind } from './protocol.ts';
+import { CAPTURE_LEVELS, sessionKey, type Ask, type Delivery, type DeliveryResult, type MachineInfo, type Report, type RespondInfo, type RespondKind, type RowText, type TraceRow } from './protocol.ts';
 import { reportOf, type ReportMeta } from './report.ts';
 import { answeredLine, answersByQuestion, asDecision, LINE_MESSAGES_ON, LINE_OPEN, planApproval, planAsk, planDismissed, planFeedback, questionAsk, respondInfo, respondLevel, terminalSummary, toolAsk, toolDecision, toolDenied, type AskedQuestion } from './respond.ts';
-import { addEvent, addFeedEntry, afterCompaction, afterStep, agentAsked, agentSpawned, apiFailure, backgroundLines, continuedAs, drainEvents, endSession, isWatched, markTextSent, measure, newSession, NO_FILES, notified, patchFeedEntry, promptShown, setAttached, setBackground, setFiles, setGit, setIdentity, setWatched, toolAborted, toolResult, toolStarted, turnComplete, turnStart, withListedAgents, withSkill, type ListedAgent, type MeasureInput, type SentTexts, type SessionState } from './state.ts';
+import { addEvent, addFeedEntry, afterCompaction, afterStep, agentAsked, agentSpawned, apiFailure, backgroundLines, callRow, continuedAs, drainEvents, endSession, isWatched, markTextSent, measure, newSession, NO_FILES, notified, patchFeedEntry, promptShown, requestRow, setAttached, setBackground, setFiles, setGit, setIdentity, setWatched, toolAborted, toolResult, toolStarted, turnComplete, turnStart, withListedAgents, withSkill, withText, type ListedAgent, type MeasureInput, type SentTexts, type SessionState } from './state.ts';
 import { headersFor, isDelivery, retryWaitMs, Transport, type PostOutcome } from './transport.ts';
 
 const GIT_POLL_MS = 10_000;
@@ -40,7 +40,8 @@ type Engine = EngineInterface;
 
 /**
  * The plugin's options (plugin.json `userConfig`) as `register` receives them, each read by its key with its default beside it:
- * a missing, empty or malformed value takes the default, except a `respond` value that is not a level, which reads as `off`.
+ * a missing, empty or malformed value takes the default, except a `respond` or `capture` value that is not a level, which
+ * reads as `off`.
  */
 function readOptions(raw: Record<string, unknown>) {
   const stringOr = (key: string, fallback: string): string => {
@@ -52,17 +53,21 @@ function readOptions(raw: Record<string, unknown>) {
     const v = raw[key];
     return typeof v === 'number' && Number.isFinite(v) ? Math.max(floor, v) : fallback;
   };
+  // What the session sends of its record: absent reads as the default `trace`.
+  const capture = raw.capture === undefined || raw.capture === null ? 'trace' : (CAPTURE_LEVELS.find((level) => level === raw.capture) ?? 'off');
   return {
     serverUrl: stringOr('serverUrl', DEFAULT_SERVER),
     token: stringOr('token', ''),
     flushIntervalMs: msOr('flushIntervalMs', 200, 1000),
     heartbeatMs: msOr('heartbeatMs', 1000, 5000),
     sessionName: stringOr('sessionName', ''),
-    // The switches: the status line and the activity feed on unless set false, full prompts off unless set true.
+    // The switches: the status line and the activity feed on unless set false, full prompts off unless set true (full capture
+    // sends them too: reportMeta).
     showStatus: raw.showStatus !== false,
     fullPrompts: raw.fullPrompts === true,
     activityFeed: raw.activityFeed !== false,
     respond: respondLevel(raw.respond),
+    capture,
   };
 }
 
@@ -91,6 +96,10 @@ interface Runtime {
   machine: MachineInfo | null;
   /** The name `/sitrep name` stored for this session. */
   storedName: string | null;
+  /** `/sitrep mute`: this session's rows carry no text, from the next turn that starts. Kept in the store as `mute:<id>`. */
+  muted: boolean;
+  /** The main loop's turn last started: its id and start, sent again with its end, and whether its rows carry text (the mute as it stood then). */
+  turn: { id: string; t0: number; text: boolean } | null;
   /** Claude Code's own name for the session, from a hook's `session_title`, and the session id it came for: it counts only while that id is reported. */
   claudeName: { forId: string; name: string } | null;
   /** The title Claude generated for the session, from its transcript's tail, and the session id it came for, likewise. */
@@ -259,6 +268,39 @@ const respondState = (r: Runtime): RespondInfo => respondInfo(opts.respond, { ac
 /** Whether the mod takes this kind of answer now: its own switches and the server's last word. */
 const takes = (r: Runtime | null, kind: RespondKind): boolean => !!r && r.transport.respond && !r.state.ended && respondState(r).accepts.includes(kind);
 
+// ---- the record -------------------------------------------------------------------------------------------------------
+
+/** Whether a record is kept: the capture option is not off, and no reply has said the server keeps none (before the first, rows wait). */
+const recording = (r: Runtime): boolean => opts.capture !== 'off' && r.transport.trace !== false;
+
+/** Whether rows carry their text now: full capture, and the session was not muted when its turn started. */
+const keepsText = (r: Runtime): boolean => recording(r) && opts.capture === 'full' && (r.turn?.text ?? !r.muted);
+
+/** Queues a row of the record, straight on the transport's one bounded queue, while one is kept, with its texts where rows carry them. Never a network call. */
+function record(r: Runtime, row: TraceRow, text: RowText = {}): void {
+  if (recording(r)) r.transport.queueRow(keepsText(r) ? withText(row, text) : row);
+}
+
+/** A text's SHA-256 as lower-case hex, by WebCrypto (the hooks have no Node `crypto`); null when the digest fails. */
+async function sha256Hex(text: string): Promise<string | null> {
+  return quietly(async () => {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+  }, null);
+}
+
+/**
+ * Queues a tool call's row. A failed call's errorHash is the SHA-256 of its issue key, which WebCrypto gives later: that row is
+ * queued once it has, and nothing waits on it.
+ */
+function recordCall(r: Runtime, { row, key, text }: ReturnType<typeof callRow>): void {
+  if (key === null) {
+    record(r, row, text);
+    return;
+  }
+  void sha256Hex(key).then((errorHash) => guard('tool.call.row', (rr) => record(rr, { ...row, errorHash }, text)));
+}
+
 /** Keeps the name Claude Code gives the session, under the id being reported; a hook without a title leaves the last one. */
 function noteClaudeName(r: Runtime, hook: { session_title?: string }): void {
   const name = (typeof hook.session_title === 'string' ? hook.session_title : '').trim().slice(0, 80);
@@ -339,7 +381,10 @@ function reportMeta(r: Runtime, now: number, machine: MachineInfo): ReportMeta {
     machine,
     names: [r.storedName, own(r.claudeName), own(r.aiTitle), opts.sessionName || null, own(r.firstPrompt)],
     clearedFrom: r.clearedFrom,
-    fullText: opts.fullPrompts,
+    // Agents' whole prompts and answers go by the user's own option, or as part of full capture: while rows carry text and a
+    // reply has said the server keeps a record, as a row waits for one. So /sitrep mute and the server's switch stop them with
+    // the rest.
+    fullText: opts.fullPrompts || (keepsText(r) && r.transport.trace === true),
     activity: opts.activityFeed,
     respond: respondState(r),
     asks: r.transport.respond && opts.respond !== 'off' ? open : null,
@@ -369,11 +414,15 @@ async function postSnapshot(r: Runtime, now: number, machine: MachineInfo): Prom
   const snapshot = r.state;
   r.state = { ...snapshot, dirty: false };
   let carried: SentTexts = {};
-  const outcome = await r.transport.send((batch) => {
-    const report = reportOf(snapshot, batch, reportMeta(r, now, machine));
-    carried = Object.fromEntries(report.agents.map((a) => [a.id, { promptText: a.promptText, answerText: a.answerText }]));
+  // An ended state's report is its session id's last (sessionEnded, startOver): nothing is sent for that id after it.
+  const outcome = await r.transport.send((batch, rows) => {
+    const report = reportOf(snapshot, batch, rows, reportMeta(r, now, machine));
+    // Which whole texts went, each as the state holds it (the report redacts its own further as it is built): markTextSent
+    // marks one sent only while the state still holds that text.
+    const held = (a: { id: string }) => snapshot.agents[a.id];
+    carried = Object.fromEntries(report.agents.map((a) => [a.id, { promptText: a.promptText ? (held(a)?.promptText ?? undefined) : undefined, answerText: a.answerText ? (held(a)?.answerText ?? undefined) : undefined }]));
     return report;
-  }, now);
+  }, now, snapshot.ended);
   return { outcome, carried };
 }
 
@@ -392,7 +441,7 @@ async function reportNow($: Engine, r: Runtime, now: number, force: boolean): Pr
   const { outcome, carried } = await postSnapshot(r, now, r.machine);
   const server = trimTrailingSlashes(opts.serverUrl);
   if (outcome === 'ok') {
-    if (opts.fullPrompts) r.state = markTextSent(r.state, carried);
+    r.state = markTextSent(r.state, carried);
     // The reply names the loops a viewer watches; with the option off, nothing is ever watched.
     const watched = opts.activityFeed ? r.transport.watch : [];
     r.state = setWatched(r.state, watched);
@@ -487,35 +536,44 @@ async function stored($: Engine, key: string): Promise<string | null> {
   return typeof v === 'string' ? v.trim() || null : null;
 }
 
-/** The git poll: the place, branch and status, then the files changed since the session's starting commit. */
+/** Whether `/sitrep mute` holds for the session `id`, as the store keeps it under `mute:<id>`; a failed read is not muted. */
+async function mutedIn($: Engine, id: string): Promise<boolean> {
+  return (await quietly<unknown>(() => $.store.get(`mute:${id}`), null)) === true;
+}
+
+/** The git poll: the place, branch and status, then the files changed since the session's starting commit and the commit HEAD is at. */
 function pollGit($: Engine, r: Runtime): Promise<void> {
   return logged($, 'git', async () => {
     await followMove($, r);
     const cwd = r.state.cwd;
     const inCwd = runnerFor($, { cwd, timeoutMs: 5000 });
     const git = await gitInfo(inCwd, cwd);
-    r.state = setGit(r.state, git);
-    await readFiles($, r, inCwd, cwd, git === null);
+    // The branch and its status show at once, with the commit last read; the files read that follows brings HEAD's.
+    r.state = setGit(r.state, git && { ...git, commit: r.state.git?.commit ?? null });
+    const commit = await readFiles($, r, inCwd, cwd, git === null);
+    if (git) r.state = setGit(r.state, { ...git, commit });
   });
 }
 
 /**
- * The files changed since the session's starting commit, for the session id in force when the read began. Asked even without
- * git info (`noGit`): a repository with no commit yet has no HEAD, yet has files to list. The starting commit is kept in the
- * store, so a hot reload (which keeps the process; a restart does not) counts from the same one.
+ * The files changed since the session's starting commit, for the session id in force when the read began; gives back the
+ * commit HEAD is at as that read found it (null when it failed, or before a first commit). Asked even without git info
+ * (`noGit`): a repository with no commit yet has no HEAD, yet has files to list. The starting commit is kept in the store, so
+ * a hot reload (which keeps the process; a restart does not) counts from the same one.
  */
-async function readFiles($: Engine, r: Runtime, run: Runner, cwd: string, noGit: boolean): Promise<void> {
+async function readFiles($: Engine, r: Runtime, run: Runner, cwd: string, noGit: boolean): Promise<string | null> {
   const id = r.state.id;
   const base = r.state.gitBase ?? (await stored($, `base:${id}`));
   const changes = await changedFiles(run, cwd, base);
   if (changes === null) {
     if (noGit) r.state = setFiles(r.state, NO_FILES, r.state.gitBase);
-    return;
+    return null;
   }
   // Under another id a /clear came while git was read, and those files belong to the session that ended.
-  if (r.state.id !== id) return;
+  if (r.state.id !== id) return changes.head;
   if (changes.base !== base) await quietly(() => $.store.set(`base:${id}`, changes.base), undefined);
   r.state = setFiles(r.state, changes.files, changes.base);
+  return changes.head;
 }
 
 /** The event that opens a session's feed: `session.start · Opus high`. */
@@ -533,10 +591,16 @@ async function startOver($: Engine, r: Runtime, newId: string, now: number): Pro
     await reportNow($, r, now, true);
   }
   r.transport.queue = [];
+  r.transport.rows = [];
+  r.transport.gap = null;
   const startedAt = (await quietly(() => $.session.usage(), null))?.startedAt;
   const { model, effort } = r.state.main;
   r.state = addEvent(continuedAs(r.state, newId, startedAt || now), 'start', null, startText(model, effort), now);
   r.storedName = await stored($, `name:${newId}`);
+  // A /clear goes on under a new id: a muted conversation stays muted.
+  if (continues && r.muted) await quietly(() => $.store.set(`mute:${newId}`, true), undefined);
+  else r.muted = await mutedIn($, newId);
+  r.turn = null;
   r.clearedFrom = continues ? old.id : null;
   answering.messagesLineShown = false;
 }
@@ -1030,12 +1094,15 @@ async function permissionAsk($: Engine, r: Runtime, e: { tool_name: string; tool
 }
 
 /**
- * The call of a permission ask ended. What happened is read from how it ended, since nothing else says: an answer from the
- * dashboard that matches it took; otherwise the terminal answered first.
+ * A tool call ended: whether a permission decision refused it. For the call of a permission ask, what happened is read from
+ * how it ended, since nothing else says: an answer from the dashboard that matches it took; otherwise the terminal answered
+ * first.
  */
-function toolAskEnded(id: string, res: CallResult | undefined): void {
+function toolAskEnded(id: string, res: CallResult | undefined): boolean {
   const a = answering.asks.get(id);
-  if (a?.ask.kind !== 'permission') return;
+  // With no ask open for it, a refusal's words count only on the result's first line: output that mentions one further down is
+  // not a refusal (a Bash result's first line is its exit status).
+  if (a?.ask.kind !== 'permission') return toolDenied(res && { ...res, text: typeof res.text === 'string' ? res.text.split('\n', 1)[0] : res.text });
   const d = a.answered;
   // The dashboard's own Deny is known by the message it sent.
   const sentDeny = d !== null && d.kind !== 'allow-once' ? toolDecision(asDecision(d)).decision : null;
@@ -1044,11 +1111,12 @@ function toolAskEnded(id: string, res: CallResult | undefined): void {
   endRace(a);
   if (d === null) {
     queueAskClose(a, 'terminal', terminalSaid);
-    return;
+    return denied;
   }
   const dashboardWon = (d.kind === 'allow-once') !== denied;
   queueDeliveryResult(a.sessionId, d.id, dashboardWon ? 'took' : 'closed');
   if (!dashboardWon) queueAskClose(a, 'terminal', terminalSaid);
+  return denied;
 }
 
 // ---- answering: messages and commands ---------------------------------------------------------------------------------
@@ -1132,6 +1200,7 @@ async function sessionStarted($: Engine, e: { cwd: string; surface: string | nul
     new Transport((url, init) => $.http.fetch(url, init), { serverUrl: opts.serverUrl, token: opts.token, heartbeatMs: opts.heartbeatMs, version }, (line) => void keepError('transport', line));
   const machine = prev?.machine ?? (await thisMachine($));
   const storedName = await stored($, `name:${id}`);
+  const muted = await mutedIn($, id);
   const sessionCwd = await quietly<string | null>(() => $.session.cwd(), null);
   rt = {
     state,
@@ -1147,6 +1216,8 @@ async function sessionStarted($: Engine, e: { cwd: string; surface: string | nul
     interactive: e.surface !== null,
     machine,
     storedName,
+    muted,
+    turn: same ? prev.turn : null,
     claudeName: same ? prev.claudeName : null,
     aiTitle: same ? prev.aiTitle : null,
     firstPrompt: same ? prev.firstPrompt : null,
@@ -1162,7 +1233,9 @@ async function sessionStarted($: Engine, e: { cwd: string; surface: string | nul
   // Whatever the module holds now, as a reload during the reads above would have replaced it.
   const r = rt;
   await readAgents($, r, now);
-  await logged($, 'command.register', () => $.command.register({ name: 'sitrep', description: 'SITREP link and status; name this session', argumentHint: '[name <text>]' }));
+  await logged($, 'command.register', () =>
+    $.command.register({ name: 'sitrep', description: "SITREP link and status; name this session, or mute its record's text", argumentHint: '[name <text> | mute | unmute]' }),
+  );
   await logged($, 'tool.register', () =>
     $.tool.register({
       name: 'plan',
@@ -1205,7 +1278,11 @@ async function sessionEnded($: Engine, e: { reason: string; sessionId: string; r
   r.stopTimers();
 }
 
-/** `/sitrep`, and `/sitrep name <text>` (the name trimmed, at most 80 characters). */
+/**
+ * `/sitrep`; `/sitrep name <text>` (the name trimmed, at most 80 characters); `/sitrep mute` and `/sitrep unmute`, which take
+ * the text out of this session's rows, or put it back, from the next turn that starts (the structure goes on), kept in the
+ * store under the session's id as its name is.
+ */
 async function dashboardCommand($: Engine, args: string): Promise<string> {
   const r = rt;
   const [, name] = /^name\s+(\S[\s\S]*)$/i.exec(args.trim()) ?? [];
@@ -1216,10 +1293,18 @@ async function dashboardCommand($: Engine, args: string): Promise<string> {
     touch(r);
     return `SITREP: session named "${trimmed}"`;
   }
+  const toggle = /^(un)?mute$/i.exec(args.trim());
+  if (toggle && r) {
+    const muted = toggle[1] === undefined;
+    await logged($, 'store.set', () => $.store.set(`mute:${r.state.id}`, muted));
+    r.muted = muted;
+    if (muted) return "SITREP: muted · from its next turn, this session's record carries no text";
+    return opts.capture === 'full' ? "SITREP: unmuted · from its next turn, this session's record carries its text" : `SITREP: unmuted · capture is ${opts.capture}, so the record carries no text`;
+  }
   if (!r) return 'SITREP: session not started yet';
   const t = r.transport;
   const connection = t.notLive ?? `connected · ${t.live}`;
-  const reports = [`${t.sent} sent`, `${t.failed} failed`, `${t.rejected} rejected`, `${t.queue.length} events queued`, ...(t.dropped ? [`${t.dropped} dropped`] : [])];
+  const reports = [`${t.sent} sent`, `${t.failed} failed`, `${t.rejected} rejected`, `${t.queue.length} events queued`, ...(t.dropped ? [`${t.dropped} dropped`] : []), ...(t.rows.length ? [`${t.rows.length} rows queued`] : [])];
   const times = Object.entries(hookTimes)
     .filter(([, h]) => h.calls > 0)
     .slice(0, 8)
@@ -1235,9 +1320,10 @@ async function dashboardCommand($: Engine, args: string): Promise<string> {
     failure ? `Last error: ${failure}` : null,
     r.machine ? `Machine: ${r.machine.name} (${r.machine.id})` : "Machine: its id cannot be read, so nothing is reported (see Last error)",
     `Session: ${r.state.id}${r.storedName ? ` · named "${r.storedName}"` : ''}`,
+    `Record: capture ${opts.capture}${opts.capture !== 'off' && t.trace === false ? ' · the server keeps none' : ''}${r.muted ? ' · text muted' : ''}`,
     background.length > 0 ? `Background (${background.length}):\n${background.join('\n')}` : null,
     times.length > 0 ? `Hook time: ${times.join('; ')}` : null,
-    'Rename: /sitrep name <text>',
+    "Rename: /sitrep name <text> · the record's text: /sitrep mute, /sitrep unmute",
   ];
   return lines.filter((l) => l !== null).join('\n');
 }
@@ -1250,15 +1336,18 @@ function raceOf(r: Runtime, tool: string): 'question' | 'plan' | null {
 }
 
 /**
- * A finished model request into the state (model, effort, context, a blowout its stop reason shows) and, for a watched loop,
+ * A finished model request, begun at `t0`, into the state (model, effort, context, a blowout its stop reason shows), its row of
+ * the record (with its visible text and the `thinking` read from its chunks, where rows carry text) and, for a watched loop,
  * the text it wrote as one feed entry. Hands the result back unchanged.
  */
-function afterModelStep(e: TurnStepInput, res: TurnStepResult, said: string): TurnStepResult {
+function afterModelStep(e: TurnStepInput, res: TurnStepResult, t0: number, said: string, thinking?: string): TurnStepResult {
   guard('turn.step', (r) => {
     const now = nowMs();
-    r.state = afterStep(r.state, { agentId: e.agentId, model: e.model, effort: e.effort, usage: res?.usage ?? null, stopReason: res?.stopReason ?? null }, now);
+    const step = { agentId: e.agentId, model: e.model, effort: e.effort, usage: res?.usage ?? null, stopReason: res?.stopReason ?? null };
+    r.state = afterStep(r.state, step, now);
     const entry = said ? feedText(said) : '';
     if (entry) r.state = addFeedEntry(r.state, e.agentId, { at: now, kind: 'text', text: entry });
+    record(r, requestRow(`${e.turnId}:${e.index}`, step, t0, now), { message: res?.answer, thinking });
   });
   return res;
 }
@@ -1292,44 +1381,67 @@ export const register: Register = (on, options) => {
     return res;
   }).catch(passOn);
 
-  // On current Claude Code a subagent's run raises turn.start too; only the main loop's starts a turn of the session.
+  // On current Claude Code a subagent's run raises turn.start too; only the main loop's starts a turn of the session, and a
+  // turn row of its record. Whether the turn's rows carry text is settled here, so /sitrep mute counts from the next turn.
   on('turn.start', async ($, e, next) => {
-    if (e.agentId === undefined) update('turn.start', (s) => turnStart(s, nowMs()));
+    if (e.agentId === undefined) {
+      guard('turn.start', (r) => {
+        const now = nowMs();
+        r.state = turnStart(r.state, now);
+        r.turn = { id: e.turnId, t0: now, text: !r.muted };
+        record(r, { id: e.turnId, kind: 'turn', agentId: null, t0: now, t1: null, end: null }, { prompt: e.text });
+      });
+    }
     return next(e);
   }).catch(passOn);
 
   on('turn.step', async function* ($, e, next) {
     // A loop a viewer watches, with the activityFeed option on: its text chunks are read as they pass and kept as one entry.
-    // Every chunk is passed on as it came, the same object and in order. `for await` drops a stream's return value, so the
-    // result is read from `stream.result`. Any other step goes the plain way.
+    // Where rows carry text, every loop's thinking chunks are read the same way, for its model request's row. Every chunk is
+    // passed on as it came, the same object and in order. `for await` drops a stream's return value, so the result is read
+    // from `stream.result`. Any other step goes the plain way.
+    const t0 = nowMs();
     let watched = false;
+    let thinks = false;
     guard('turn.step.watch', (r) => {
       watched = opts.activityFeed && isWatched(r.state, e.agentId);
+      thinks = keepsText(r);
     });
-    if (!watched) {
+    if (!watched && !thinks) {
       const res = yield* next(e);
-      return afterModelStep(e, res, '');
+      return afterModelStep(e, res, t0, '');
     }
     const stream = next(e);
     let said = '';
+    let thinking = '';
     for await (const chunk of stream) {
-      if (said.length < STEP_TEXT_MAX) {
+      // Each text is read only while it can still be used: the feed's up to STEP_TEXT_MAX, the thinking until it passes its cut.
+      const reads = (watched && said.length < STEP_TEXT_MAX) || (thinks && thinking.length <= LIMITS.fullText);
+      if (reads) {
         guard('turn.step.chunk', () => {
-          if (chunk.kind === 'text' && typeof chunk.text === 'string') said += chunk.text;
+          if (chunk.kind === 'text' && watched && said.length < STEP_TEXT_MAX && typeof chunk.text === 'string') said += chunk.text;
+          else if (chunk.kind === 'thinking' && thinks && thinking.length <= LIMITS.fullText && typeof chunk.text === 'string') thinking += chunk.text;
         });
       }
       yield chunk;
     }
     const res = await stream.result;
-    return afterModelStep(e, res, said);
+    return afterModelStep(e, res, t0, said, thinking);
   }).catch(async function* ($, e, next) {
     return yield* next(e);
   });
 
-  // A loop's turn ended: the main loop goes idle, an agent finishes, fails or stops.
+  // A loop's turn ended: the main loop goes idle, an agent finishes, fails or stops. The main loop's turn row goes again
+  // under its id, with its end; a turn whose start this load did not see (a reload mid-turn) began its duration before.
   on('turn.complete', async ($, e, next) => {
     const res = await next(e);
-    update('turn.complete', (s) => turnComplete(s, { agentId: e.agentId, reason: e.reason, answer: e.answer }, nowMs()));
+    guard('turn.complete', (r) => {
+      const now = nowMs();
+      r.state = turnComplete(r.state, { agentId: e.agentId, reason: e.reason, answer: e.answer }, now);
+      if (e.agentId !== undefined) return;
+      const t0 = r.turn?.id === e.turnId ? r.turn.t0 : now - e.durationMs;
+      record(r, { id: e.turnId, kind: 'turn', agentId: null, t0, t1: now, end: e.reason });
+    });
     return res;
   }).catch(passOn);
 
@@ -1378,19 +1490,26 @@ export const register: Register = (on, options) => {
   on('tool.call', async ($, e, next) => {
     const tool = String(e.tool);
     const callInput = e as unknown as Record<string, unknown>;
+    const t0 = nowMs();
     let call: CallEntry | undefined;
+    // The call's own arguments as JSON: what a PermissionRequest is matched by and what the record hashes.
+    let args = '';
     guard('tool.call', (r) => {
-      const now = nowMs();
-      r.state = toolStarted(r.state, e.agentId, tool, callInput, now);
-      if (opts.activityFeed && isWatched(r.state, e.agentId)) r.state = addFeedEntry(r.state, e.agentId, toolEntry(now, tool, callInput, e.tool_use_id));
-      if (tool === 'Agent' && e.tool_use_id) r.state = agentAsked(r.state, e.tool_use_id, callInput, now);
+      r.state = toolStarted(r.state, e.agentId, tool, callInput, t0);
+      if (opts.activityFeed && isWatched(r.state, e.agentId)) r.state = addFeedEntry(r.state, e.agentId, toolEntry(t0, tool, callInput, e.tool_use_id));
+      if (tool === 'Agent' && e.tool_use_id) r.state = agentAsked(r.state, e.tool_use_id, callInput, t0);
       if (tool === 'Skill') r.skillCalls++;
-      if (!e.tool_use_id || opts.respond === 'off') return;
+      if (!e.tool_use_id || (opts.respond === 'off' && opts.capture === 'off')) return;
       // A PermissionRequest that follows carries only the tool's own arguments, so the call is kept by those to match it.
-      const args = Object.fromEntries(Object.entries(callInput).filter(([key]) => !EVENT_FIELDS.has(key)));
-      call = { tool, input: argsKey(args), id: e.tool_use_id, ended: false };
+      args = argsKey(Object.fromEntries(Object.entries(callInput).filter(([key]) => !EVENT_FIELDS.has(key))));
+      if (opts.respond === 'off') return;
+      call = { tool, input: args, id: e.tool_use_id, ended: false };
       answering.lastCalls.set(loopOf(e.agentId), call);
     });
+    /** The call's row once it ended: what it resolved to, null when it threw. A call without a tool_use_id has none. */
+    const ended = (r: Runtime, result: CallResult | null, denied: boolean): void => {
+      if (e.tool_use_id && recording(r)) recordCall(r, callRow({ id: e.tool_use_id, agentId: e.agentId, tool, args, t0, result, denied }, nowMs()));
+    };
     // While the mod answers, a question or a plan races the terminal's dialog against an answer from the dashboard.
     const r = rt;
     const racer: RacingCall | null = e.tool_use_id ? { id: e.tool_use_id, agentId: e.agentId ?? null, input: callInput } : null;
@@ -1401,8 +1520,11 @@ export const register: Register = (on, options) => {
       else if (r && racer && racing === 'plan') res = await planRace($, r, racer, next(e) as Promise<CallResult>);
       else res = (await next(e)) as CallResult | undefined;
     } catch (err) {
-      // A call that throws returns no result: it is no longer open, and not marked done.
-      update('tool.call.aborted', (s) => toolAborted(s, e.agentId, nowMs()));
+      // A call that throws returns no result: it is no longer open, and not marked done. Its row reads interrupted.
+      guard('tool.call.aborted', (rr) => {
+        rr.state = toolAborted(rr.state, e.agentId, nowMs());
+        ended(rr, null, false);
+      });
       throw err;
     } finally {
       // A PermissionRequest whose hooks beneath were still running then opens no ask for it (permissionAsk).
@@ -1415,9 +1537,10 @@ export const register: Register = (on, options) => {
       const result = res ?? {};
       rr.state = toolResult(rr.state, { agentId: e.agentId, tool, input: callInput, result }, nowMs());
       if (!e.tool_use_id) return;
-      toolAskEnded(e.tool_use_id, res);
+      const denied = toolAskEnded(e.tool_use_id, res);
       // How a finished Bash call ended rides the feed; its output never does.
       if (tool === 'Bash' && opts.activityFeed) rr.state = patchFeedEntry(rr.state, e.agentId, e.tool_use_id, finishedCall(result));
+      ended(rr, result, denied);
     });
     return res as Awaited<ReturnType<typeof next>>;
   }).catch(passOn);

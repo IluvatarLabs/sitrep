@@ -8,8 +8,9 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { pipeline } from 'node:stream';
 import zlib from 'node:zlib';
-import { LIMITS, RESPOND_LIMITS } from '../../server/src/fleet/protocol.js';
-import { activityText, clip, clipFreeText, excerpt, promptName, redact, summarizeCall } from './report.js';
+import { callHash, LIMITS, RESPOND_LIMITS } from '../../server/src/fleet/protocol.js';
+import { capture } from './config.js';
+import { activityText, clip, clipFreeText, excerpt, promptName, rawText, redact, shortName, summarizeCall } from './report.js';
 import type { Line } from './spool.js';
 
 /** `$CODEX_HOME`, else `~/.codex`, as Codex finds its home (`utils/home-dir/src/lib.rs:13-40`). */
@@ -156,7 +157,11 @@ export interface RawWindow {
   resetsAt: number | null;
 }
 
-/** What one session-file record says, in the reporter's terms. Free text is already cut and redacted: nothing longer is kept. */
+/**
+ * What one session-file record says, in the reporter's terms. Free text is already cut and redacted: nothing longer is kept, except
+ * the record's text (`raw`, `input`, `output`), read only for the capture level that needs it and held raw to a kept
+ * text's length (report.ts rawText) until a report takes its row.
+ */
 export type RolloutRecord =
   | {
       kind: 'meta';
@@ -192,17 +197,27 @@ export type RolloutRecord =
       questions?: AsyncQuestion[];
       /** What a call that sends another agent of the session a message sends, and to whom. */
       message?: SentMessage;
+      /** Unless capture is `off`: the call's fingerprint (protocol callHash) over its input (inputOf). At `full`: that input. */
+      hash?: string | null;
+      input?: string;
     }
-  /** `accepted`: the output is Codex's `{"accepted":true}`, which an async question call returns when it is shown. */
-  | { kind: 'callOutput'; callId: string; spawnedId: string | null; accepted: boolean }
-  | { kind: 'command'; id: string; summary: string; status: string; exitCode: number | null }
+  /** `accepted`: the output is Codex's `{"accepted":true}`, which an async question call returns when it is shown. At `full`: the output. */
+  | { kind: 'callOutput'; callId: string; spawnedId: string | null; accepted: boolean; output?: string }
+  /**
+   * `failed`: its status is `failed` or its exit code is not 0. `output`: its output, at `trace` only when it failed (for its issue
+   * key, never sent), at `full` always; `input`: at `full`, its command.
+   */
+  | { kind: 'command'; id: string; summary: string; status: string; exitCode: number | null; failed: boolean; output: string | null; input?: string }
   | { kind: 'fileChange'; id: string; paths: string[] }
   | { kind: 'spawned'; prompt: string; receivers: string[] }
-  | { kind: 'message'; text: string }
+  /** An agent message, as an activity entry's text; at `full`, the whole of it (`raw`). */
+  | { kind: 'message'; text: string; raw?: string }
+  /** At `full` only: a reasoning item's summary (never its encrypted content). */
+  | { kind: 'reasoning'; raw: string }
   /** A user message that is the reply envelope of async questions: only the question ids it answers are kept. */
   | { kind: 'questionReply'; ids: string[] }
-  /** A user message's text, redacted as free text and cut to a session name's length (promptOf); nothing else of it is kept. */
-  | { kind: 'prompt'; text: string };
+  /** A user message's text, redacted as free text and cut to a session name's length (promptOf); at `full`, the whole of it (`raw`). */
+  | { kind: 'prompt'; text: string; raw?: string };
 
 /**
  * One `request_user_input_async` question as its ask needs it: the title, redacted and bounded, and the option labels the
@@ -236,7 +251,7 @@ const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 
 /** The record types and payload types the reporter reads; every other line is skipped without being parsed. */
 const WANTED_EVENTS = new Set(['task_started', 'task_complete', 'turn_aborted', 'token_count', 'item_completed', 'agent_message', 'patch_apply_end', 'user_message']);
-const WANTED_ITEMS = new Set(['function_call', 'custom_tool_call', 'local_shell_call', 'function_call_output', 'custom_tool_call_output']);
+const WANTED_ITEMS = new Set(['function_call', 'custom_tool_call', 'local_shell_call', 'function_call_output', 'custom_tool_call_output', ...(capture === 'full' ? ['reasoning'] : [])]);
 const HEAD = /"type":"([a-z_]+)"(?:,"payload":\{"type":"([A-Za-z_]+)")?/;
 /** The markers of the reply envelope the Codex desktop app and TUI answer async questions with (`context-fragments/src/answered_question.rs:41-46`). */
 export const REPLY_OPEN = '<send_user_message_question_reply>';
@@ -387,8 +402,10 @@ function recordOf(type: string, p: Obj): RolloutRecord | null {
           hasLimits: limits !== null,
         };
       }
-      case 'agent_message':
-        return str(p.message) ? { kind: 'message', text: activityText(p.message as string) } : null;
+      case 'agent_message': {
+        const raw = fullText(str(p.message) ?? '');
+        return str(p.message) ? { kind: 'message', text: activityText(p.message as string), ...(raw ? { raw } : {}) } : null;
+      }
       // A legacy-history thread's user message; a paginated one's is an `item_completed` UserMessage (itemOf).
       case 'user_message':
         return promptOf(str(p.message) ?? '');
@@ -402,16 +419,63 @@ function recordOf(type: string, p: Obj): RolloutRecord | null {
         return null;
     }
   }
-  if (type === 'response_item') return responseItemOf(p);
+  if (type === 'response_item') {
+    const r = responseItemOf(p);
+    return r?.kind === 'call' ? { ...r, ...callTrace(p, r.name) } : r;
+  }
   return null;
+}
+
+/** At full capture, a record's whole text, raw (report.ts rawText); undefined otherwise, and for no text. */
+const fullText = (text: string): string | undefined => (capture === 'full' && text ? rawText(text) : undefined);
+
+/**
+ * A call's input, as its fingerprint and its kept text take it: its `arguments`, else its `input`; a string that is JSON trimmed,
+ * and none for `{}` or `[]`; any other string as written; a value that is not a string as JSON. Empty when it has none.
+ */
+function inputOf(p: Obj): string {
+  for (const v of [p.arguments, p.input]) {
+    if (v === undefined || v === null) continue;
+    if (typeof v !== 'string') {
+      const json = JSON.stringify(v);
+      if (json !== '{}' && json !== '[]') return json;
+      continue;
+    }
+    const trimmed = v.trim();
+    if (!trimmed) continue;
+    try {
+      JSON.parse(trimmed);
+    } catch {
+      return v;
+    }
+    if (trimmed !== '{}' && trimmed !== '[]') return trimmed;
+  }
+  return '';
+}
+
+/** A call's record fields: unless capture is `off`, its fingerprint; at `full`, its input too. */
+function callTrace(p: Obj, name: string): { hash?: string | null; input?: string } {
+  if (capture === 'off') return {};
+  const input = inputOf(p);
+  const kept = fullText(input);
+  return { hash: callHash(name, input), ...(kept ? { input: kept } : {}) };
 }
 
 /** A paginated-history item (`TurnItem`, tagged with its PascalCase variant name). */
 function itemOf(item: Obj | null): RolloutRecord | null {
   if (!item) return null;
   switch (item.type) {
-    case 'CommandExecution':
-      return { kind: 'command', id: str(item.id) ?? '', summary: summarizeCall('Shell', { command: commandLine(item.command) }), status: String(item.status ?? ''), exitCode: num(item.exit_code) };
+    case 'CommandExecution': {
+      // Codex keeps its output (`aggregated_output`, at most 64 KiB) beside its status and exit code (`protocol/src/items.rs:282-319`,
+      // `rollout/src/policy.rs:253-268`).
+      const status = String(item.status ?? '');
+      const exitCode = num(item.exit_code);
+      const failed = status === 'failed' || (exitCode !== null && exitCode !== 0);
+      const output = capture === 'full' || (capture === 'trace' && failed) ? rawText(str(item.aggregated_output) ?? '') || null : null;
+      const command = commandLine(item.command);
+      const input = fullText(command);
+      return { kind: 'command', id: str(item.id) ?? '', summary: summarizeCall('Shell', { command }), status, exitCode, failed, output, ...(input ? { input } : {}) };
+    }
     case 'FileChange': {
       const changes = obj(item.changes);
       return changes ? { kind: 'fileChange', id: str(item.id) ?? '', paths: Object.keys(changes).slice(0, 50) } : null;
@@ -423,7 +487,8 @@ function itemOf(item: Obj | null): RolloutRecord | null {
     }
     case 'AgentMessage': {
       const parts = Array.isArray(item.content) ? item.content.map((c) => str(obj(c)?.text) ?? '').filter(Boolean) : [];
-      return parts.length ? { kind: 'message', text: activityText(parts.join(' ')) } : null;
+      const raw = fullText(parts.join(''));
+      return parts.length ? { kind: 'message', text: activityText(parts.join(' ')), ...(raw ? { raw } : {}) } : null;
     }
     // Its text inputs joined, as Codex's `UserMessageItem::message` joins them (`protocol/src/items.rs:545-554`; only the text
     // input has a `text`, `protocol/src/user_input.rs:16-57`).
@@ -448,7 +513,8 @@ function promptOf(text: string): RolloutRecord | null {
   const at = text.indexOf(USER_MESSAGE_BEGIN);
   const own = (at === -1 ? text : text.slice(at + USER_MESSAGE_BEGIN.length)).trim();
   const name = own && !questionReplyIds(text) ? promptName(own, LIMITS.name) : '';
-  return name ? { kind: 'prompt', text: name } : null;
+  const raw = fullText(text);
+  return name ? { kind: 'prompt', text: name, ...(raw ? { raw } : {}) } : null;
 }
 
 /** How many questions, and options per question, a call keeps: past the ask's limits it is not announced anyway. */
@@ -553,11 +619,18 @@ function messageOf(p: Obj, args: Obj): SentMessage | null {
       })
       .join('\n');
   } else return null;
-  // The message is a tool's free-text argument: the broader rules, then the narrow ones.
-  return { target: excerpt(target, LIMITS.short), text: clipFreeText(text.replace(/\s+/g, ' ').trim(), LIMITS.text) };
+  // The message is a tool's free-text argument: the free-text rules (clipFreeText).
+  return { target: shortName(target, LIMITS.short), text: clipFreeText(text.replace(/\s+/g, ' ').trim(), LIMITS.text) };
 }
 
 function responseItemOf(p: Obj): RolloutRecord | null {
+  if (p.type === 'reasoning') {
+    // Its summary's parts, each trimmed, the empty ones left out, joined by a blank line; read at `full` only (WANTED_ITEMS), and
+    // never its `encrypted_content`.
+    const parts = Array.isArray(p.summary) ? p.summary.map((part) => str(obj(part)?.text)?.trim() ?? '').filter(Boolean) : [];
+    const raw = fullText(parts.join('\n\n'));
+    return raw ? { kind: 'reasoning', raw } : null;
+  }
   if (p.type === 'message') {
     // Like the TUI's parse_input: a user message whose only content is one text (`tui/src/async_question_reply.rs:49-60`).
     const content = Array.isArray(p.content) ? p.content : [];
@@ -568,9 +641,13 @@ function responseItemOf(p: Obj): RolloutRecord | null {
   const callId = str(p.call_id);
   if (p.type === 'function_call_output' || p.type === 'custom_tool_call_output') {
     if (!callId) return null;
-    // Only a spawn_agent result's child and an async question call's acceptance are read; nothing else in an output is.
+    // Only a spawn_agent result's child and an async question call's acceptance are read; nothing else in an output is, but at
+    // full capture the output itself for the call's row: a string as written, a list of content items (how Codex writes a
+    // code-mode call's) as their text, anything else as its JSON.
     const out = typeof p.output === 'string' ? parseJson(p.output) : null;
-    return { kind: 'callOutput', callId, spawnedId: str(out?.agent_id), accepted: out?.accepted === true };
+    const texts = Array.isArray(p.output) ? p.output.flatMap((item) => str(obj(item)?.text) ?? []) : [];
+    const output = fullText(typeof p.output === 'string' ? p.output : texts.length ? texts.join('\n') : (JSON.stringify(p.output) ?? ''));
+    return { kind: 'callOutput', callId, spawnedId: str(out?.agent_id), accepted: out?.accepted === true, ...(output ? { output } : {}) };
   }
   if (p.type === 'local_shell_call') {
     const action = obj(p.action);

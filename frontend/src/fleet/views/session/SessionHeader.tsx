@@ -1,11 +1,12 @@
 // The top of a session's page, two lines. First its state mark and name (Rename, signed in, gives it a display name for the
-// dashboard only), then its state line; then where and on what it runs: the machine with its OS, where it runs on it when that
+// dashboard only), then its state line and who claimed it (Claim, signed in, while it needs someone); then where and on what it runs: the machine with its OS, where it runs on it when that
 // is not a terminal (Chips SurfaceChip), the model with its effort, its directory (cut at the front, so its last folders stay), its repository and git line, and copy controls for its resume
 // and fork commands (when its harness has them) and its id. `SessionNotices`: its reporter out of range, its Codex hooks off, and files another loop also
 // edited.
 import { useState, type FormEvent, type ReactNode } from "react";
 import { LIMITS } from "../../../../../server/src/fleet/protocol";
 import { ModelChip, SurfaceChip } from "../../components/Chips";
+import { ClaimControl } from "../../components/Claim";
 import { IconCheck, IconCopy, osLogo } from "../../components/Icons";
 import { HOOKS_OFF_NOTE, hooksOffText, versionNote } from "../../components/SessionCard";
 import { SHORT_ID, useCopy } from "../../components/SessionId";
@@ -133,6 +134,7 @@ export function SessionHead({ s, now, readOnly }: HeadProps) {
           </>
         )}
         <span className={`sv-state ${readOnly ? "done" : state}`}>{line}</span>
+        {readOnly ? null : <ClaimControl s={s} />}
       </div>
       <div className="sv-l2">
         <span className="sv-machine" title={s.machine.os ?? "OS not reported"}>
@@ -177,7 +179,8 @@ function Collisions({ s, sessions }: { s: SessionView; sessions: Readonly<Record
     const session = c.sessionId === s.id ? s : sessions[c.sessionId];
     const agent = c.agentId === null ? undefined : session?.agents.find((a) => a.id === c.agentId);
     const name = agent ? agentName(agent) : c.name;
-    if (c.sessionId === s.id) return `${name} in this session`;
+    // This session's own main loop goes by that, not by the session's name, which would read as another session.
+    if (c.sessionId === s.id) return `${c.agentId === null ? "the main loop" : name} in this session`;
     return agent && session ? `${name} in ${session.name}` : name;
   };
   // Newest first, as the server lists them, so a line's first collision is its latest.

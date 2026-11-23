@@ -1,10 +1,18 @@
 // Getting reports to the server. Hooks only queue events and the flush timer calls `send`, so no hook ever waits on the
 // network. At most 500 events are held (past that the oldest are dropped), one POST is out at a time, the server
-// acknowledges events by count, and while it cannot be reached the next try waits 1 s, 2 s, 5 s, then 10 s.
+// acknowledges events by count, and while it cannot be reached the next try waits 1 s, 2 s, 5 s, then 10 s. The record's
+// rows have a queue of their own beside it, which the hooks fill directly: at most 500 held (past that the oldest go, never
+// those of the POST in flight, and one gap row counts them), sent only once a reply says the server keeps a record, at most
+// LIMITS.rows and LIMITS.rowTextChars of text a report, each row's text redacted once, as the report that first carries it is
+// built, and acknowledged by count as events are (codex-reporter/src/transport.ts does the same). Nothing goes for a session id
+// after its last report, so that report counts the rows it cannot carry on the gap row and carries it (codex-reporter instead
+// sends an ended session's final report again until its rows are taken).
 import type { HttpInit, HttpResponse } from 'claude-code';
+import { withoutControls } from './activityDetail.ts';
 import { withBuild } from './build.ts';
+import { redactFreeText } from './failures.ts';
 import { trimTrailingSlashes } from './machine.ts';
-import { TOKEN_HEADER, type ActivityEvent, type Delivery, type Report, type ReportReply, type ReporterCompat, type ReporterSupport } from './protocol.ts';
+import { LIMITS, TOKEN_HEADER, type ActivityEvent, type Delivery, type Report, type ReportReply, type ReporterCompat, type ReporterSupport, type TraceRow } from './protocol.ts';
 
 /** The waits before the 1st, 2nd, 3rd and every later retry while the server cannot be reached. */
 const RETRY_WAITS_MS = [1000, 2000, 5000, 10_000] as const;
@@ -101,7 +109,17 @@ export class Transport {
   deliveries: Delivery[] = [];
   /** The loops a viewer watches. */
   watch: string[] = [];
+  /** Whether the server keeps a record: null until a reply says (rows are queued and none goes), then its reply's `trace` (an older server says nothing: false). */
+  trace: boolean | null = null;
+  /** The record's rows waiting to go, oldest first. */
+  rows: TraceRow[] = [];
+  /** The one gap row standing for the rows dropped since the server last took one, sent first; null when none. */
+  gap: TraceRow | null = null;
 
+  /** How many rows at the head of `rows` the POST in flight carries: they are never dropped from under it. */
+  private flying = 0;
+  /** Queued rows whose text is redacted already. */
+  private readonly redacted = new WeakSet<TraceRow>();
   private posting: Promise<PostOutcome> | null = null;
   private rejectStreak = 0;
   private loggedReject = false;
@@ -123,17 +141,71 @@ export class Transport {
     this.dropped += over;
   }
 
+  /** Queues a row of the record unless the server said it keeps none. Past QUEUE_MAX the oldest go (never those of the POST in flight), and the gap row counts them. */
+  queueRow(row: TraceRow): void {
+    if (this.trace === false) return;
+    this.rows.push(row);
+    if (this.rows.length > QUEUE_MAX) this.lose(this.rows.splice(this.flying, this.rows.length - QUEUE_MAX));
+  }
+
+  /**
+   * Rows that will never reach the server, counted on the one gap row. It grows as a new object under its id, so one sent and
+   * in flight is sent again with the larger count, which the server takes in its place; its t0 is the first dropped row's.
+   */
+  private lose(dropped: readonly TraceRow[]): void {
+    const first = dropped[0];
+    if (first === undefined) return;
+    const g = this.gap;
+    this.gap = { id: g?.id ?? `gap:${crypto.randomUUID()}`, kind: 'gap', agentId: null, t0: g?.t0 ?? first.t0, t1: null, count: (g?.count ?? 0) + dropped.length };
+  }
+
+  /**
+   * The queued rows the next report carries, oldest first: at most `max`, with at most LIMITS.rowTextChars of text between them,
+   * so a row whose text does not fit waits for the next report (the first always goes). Each row's text is redacted here, as
+   * the report is built and never in a hook: the free-text rules, after control characters are taken out (as a command's are).
+   * The redacted row takes the raw one's place, so a report that did not land never redacts it again.
+   */
+  private nextRows(max: number): TraceRow[] {
+    const batch: TraceRow[] = [];
+    let chars = 0;
+    for (let i = 0; i < this.rows.length && batch.length < max; i++) {
+      let row = this.rows[i]!;
+      if (row.text && !this.redacted.has(row)) {
+        row = { ...row, text: Object.fromEntries(Object.entries(row.text).map(([part, t = '']) => [part, redactFreeText(withoutControls(t))])) };
+        this.redacted.add(row);
+        this.rows[i] = row;
+      }
+      const n = Object.values(row.text ?? {}).reduce((sum, t) => sum + (t?.length ?? 0), 0);
+      if (batch.length > 0 && chars + n > LIMITS.rowTextChars) break;
+      chars += n;
+      batch.push(row);
+    }
+    return batch;
+  }
+
+  /**
+   * Takes rows off the queue, each by itself, not by id: a turn row queued again under its id while the first was in flight is a
+   * newer row, and stays. The gap row goes when it is among them, unless it grew while in flight (a new object, to go again).
+   */
+  private dropRows(taken: readonly TraceRow[]): void {
+    if (taken.length === 0) return;
+    const gone = new Set(taken);
+    if (this.gap !== null && gone.has(this.gap)) this.gap = null;
+    this.rows = this.rows.filter((row) => !gone.has(row));
+  }
+
   /** Whether a report goes now: none in flight, no backoff holding, and something to say or the heartbeat due. */
   isDue(now: number, changed: boolean): boolean {
     const holding = this.inFlight || now < this.nextAttemptAt;
-    return !holding && (changed || this.queue.length > 0 || this.lastSentAt === 0 || now - this.lastSentAt >= this.cfg.heartbeatMs);
+    const rowsWait = this.trace === true && (this.rows.length > 0 || this.gap !== null);
+    return !holding && (changed || this.queue.length > 0 || rowsWait || this.lastSentAt === 0 || now - this.lastSentAt >= this.cfg.heartbeatMs);
   }
 
-  /** Posts one report (see `post`); answers 'busy' at once while another is in flight. */
-  send(makeReport: (events: ActivityEvent[]) => Report, now: number): Promise<PostOutcome> {
+  /** Posts one report (see `post`), `last` when it is its session id's last; answers 'busy' at once while another is in flight. */
+  send(makeReport: (events: ActivityEvent[], rows: TraceRow[]) => Report, now: number, last = false): Promise<PostOutcome> {
     if (this.inFlight) return Promise.resolve<PostOutcome>('busy');
     this.inFlight = true;
-    this.posting = this.post(makeReport, now);
+    this.posting = this.post(makeReport, now, last);
     return this.posting;
   }
 
@@ -143,16 +215,33 @@ export class Transport {
   }
 
   /**
-   * Posts one report with the oldest queued events (at most 100). A 200 acknowledges them; a 400 or 413 drops that report and
-   * its events (the server would never take it) and backs off; a 401 keeps them and waits a minute; anything else, an
-   * unreachable server included, keeps them and backs off.
+   * Posts one report with the oldest queued events (at most 100) and, once a reply has said the server keeps a record, the gap
+   * row and the oldest queued rows (at most LIMITS.rows in all, nextRows). The rows a session id's `last` report does not carry
+   * would never be sent, so they leave the queue counted on the gap row, which that report carries first. A 200 acknowledges
+   * them; a 400 or 413 drops that report, its events and its rows, the gap row counting those (the server would never take
+   * it), and backs off; a 401 keeps them and waits a minute; anything else, an unreachable server included, keeps them and
+   * backs off.
    */
-  private async post(makeReport: (events: ActivityEvent[]) => Report, now: number): Promise<PostOutcome> {
+  private async post(makeReport: (events: ActivityEvent[], rows: TraceRow[]) => Report, now: number, last: boolean): Promise<PostOutcome> {
     const batch = this.queue.slice(0, EVENTS_PER_REPORT);
+    const gap = this.trace === true ? this.gap : null;
     try {
-      const res = await this.fetch(this.url, { method: 'POST', headers: headersFor(this.cfg.token), body: JSON.stringify(makeReport(batch)) });
-      if (res.ok) return this.accepted(res.text, batch, now);
-      if (res.status === 400 || res.status === 413) return this.rejectedWith(res, batch, now);
+      // One place is the gap row's: the one standing, or the one a last report adds when more rows are queued than it can hold.
+      const room = LIMITS.rows - (gap !== null || (last && this.rows.length > LIMITS.rows) ? 1 : 0);
+      const queued = this.trace === true ? this.nextRows(room) : [];
+      const report = makeReport(batch, gap ? [gap, ...queued] : queued);
+      // The rows it carries in the end: its byte budget may leave the last ones out (never the first), and those wait.
+      let rows = report.rows ?? [];
+      this.flying = rows.length - (gap ? 1 : 0);
+      if (last && this.trace === true && this.flying < this.rows.length) {
+        // Taken in after the byte budget ran: a gap row holds no text (about 120 bytes), and that budget keeps 44 KB below the
+        // server's 512 KB.
+        this.lose(this.rows.splice(this.flying));
+        rows = report.rows = [this.gap!, ...rows.slice(gap ? 1 : 0)];
+      }
+      const res = await this.fetch(this.url, { method: 'POST', headers: headersFor(this.cfg.token), body: JSON.stringify(report) });
+      if (res.ok) return this.accepted(res.text, batch, rows, now);
+      if (res.status === 400 || res.status === 413) return this.rejectedWith(res, batch, rows, now);
       if (res.status === 401) return this.refusedAt(now);
       throw new Error(`HTTP ${res.status}`);
     } catch (err) {
@@ -160,11 +249,14 @@ export class Transport {
     } finally {
       this.inFlight = false;
       this.posting = null;
+      this.flying = 0;
     }
   }
 
-  private accepted(text: string, batch: readonly ActivityEvent[], now: number): PostOutcome {
-    this.dropAcked(batch, this.takeReply(text, batch));
+  private accepted(text: string, batch: readonly ActivityEvent[], rows: readonly TraceRow[], now: number): PostOutcome {
+    const acked = this.takeReply(text, batch.length, rows.length);
+    this.dropAcked(batch, acked.events);
+    this.dropRows(rows.slice(0, acked.rows));
     this.sent++;
     this.online = true;
     this.lastSentAt = now;
@@ -178,11 +270,15 @@ export class Transport {
   }
 
   /**
-   * The server answered about the report itself, so it would never take it: the report goes with its events. That is no
-   * outage, but backing off keeps a report it keeps refusing from going out on every tick while the state is dirty.
+   * The server answered about the report itself, so it would never take it: the report goes with its events, and its rows with
+   * them, counted on the gap row (which stays). That is no outage, but backing off keeps a report it keeps refusing from going
+   * out on every tick while the state is dirty.
    */
-  private rejectedWith(res: Pick<HttpResponse, 'status' | 'text'>, batch: readonly ActivityEvent[], now: number): PostOutcome {
+  private rejectedWith(res: Pick<HttpResponse, 'status' | 'text'>, batch: readonly ActivityEvent[], rows: readonly TraceRow[], now: number): PostOutcome {
     this.dropAcked(batch, batch.length);
+    const carried = rows.filter((row) => row.kind !== 'gap');
+    this.dropRows(carried);
+    this.lose(carried);
     this.rejected++;
     this.online = true;
     this.lastError = `report rejected (${res.status})`;
@@ -222,16 +318,16 @@ export class Transport {
     return 'failed';
   }
 
-  /** Takes in what a 200 reply says, and how many of `batch` it acknowledged: all of them when it does not say. */
-  private takeReply(text: string, batch: readonly ActivityEvent[]): number {
+  /** Takes in what a 200 reply says, and how many of the report's events and rows it acknowledged: all of them when it does not say. */
+  private takeReply(text: string, events: number, rows: number): { events: number; rows: number } {
     let reply: Partial<Record<keyof ReportReply, unknown>> | null;
     try {
       reply = JSON.parse(text) as typeof reply;
     } catch {
       // A 200 without a JSON body still acknowledges everything that went.
-      return batch.length;
+      return { events, rows };
     }
-    if (reply === null) return batch.length;
+    if (reply === null) return { events, rows };
     if (typeof reply.liveSessions === 'number') this.liveSessions = reply.liveSessions;
     const compat = reply.reporterCompat;
     this.compat = compat === 'ok' || compat === 'outdated' || compat === 'newer' ? compat : null;
@@ -242,8 +338,14 @@ export class Transport {
     this.watch = strings(reply.watch).slice(0, MAX_WATCHED);
     this.respond = reply.respond === true;
     this.deliveries = this.respond && Array.isArray(reply.deliveries) ? reply.deliveries.filter(isDelivery).slice(0, MAX_DELIVERIES) : [];
-    const acked = reply.ackedEvents;
-    return typeof acked === 'number' ? Math.max(0, Math.min(batch.length, acked)) : batch.length;
+    // An older server says nothing of a record: it keeps none. Rows queued for one that keeps none go, and none of them is a gap.
+    this.trace = reply.trace === true;
+    if (!this.trace) {
+      this.rows = [];
+      this.gap = null;
+    }
+    const taken = (acked: unknown, sent: number): number => (typeof acked === 'number' ? Math.max(0, Math.min(sent, acked)) : sent);
+    return { events: taken(reply.ackedEvents, events), rows: taken(reply.ackedRows, rows) };
   }
 
   /** Takes the first `n` events of `batch` off the queue by id; events queued while the POST was out stay. */

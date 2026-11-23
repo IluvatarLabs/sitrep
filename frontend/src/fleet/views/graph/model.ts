@@ -182,7 +182,11 @@ const EM: Readonly<Record<string, number>> = { " ": 0.3, i: 0.27, l: 0.27, j: 0.
 const WIDE = /[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Hangul}　-〿！-｠￠-￦]/u;
 export function textW(text: string, px: number, bold = false): number {
   let em = 0;
-  for (const c of text) em += EM[c] ?? (c >= "A" && c <= "Z" ? 0.69 : c >= "0" && c <= "9" ? 0.6 : c >= "a" && c <= "z" ? 0.555 : WIDE.test(c) ? 1 : 0.7);
+  for (const char of text) {
+    // An accented letter is as wide as the letter under its accent ("é" as "e").
+    const c = char.normalize("NFD")[0] ?? char;
+    em += EM[c] ?? (c >= "A" && c <= "Z" ? 0.69 : c >= "0" && c <= "9" ? 0.6 : c >= "a" && c <= "z" ? 0.555 : WIDE.test(c) ? 1 : 0.7);
+  }
   return em * px * (bold ? 1.05 : 1.01) + 2;
 }
 /** The provider logo and its gap before a loop's second line, px. */

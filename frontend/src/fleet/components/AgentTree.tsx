@@ -118,7 +118,7 @@ export function AgentTree(props: AgentTreeProps) {
   const mainKind = stateOf(s);
 
   return (
-    <section className="ag-tree" aria-label="Agents">
+    <div className="ag-tree">
       <div className="sv-bar">
         {props.lead}
         {unsort}
@@ -146,6 +146,6 @@ export function AgentTree(props: AgentTreeProps) {
         </button>
         {agentRows}
       </div>
-    </section>
+    </div>
   );
 }

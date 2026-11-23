@@ -131,9 +131,9 @@ td.sv-n { font-variant-numeric: tabular-nums; }
 .sv-state.failed { color: var(--fail); }
 .sv-machine { display: inline-flex; align-items: center; gap: var(--s1); min-width: 0; white-space: nowrap; }
 .sv-path { flex: 0 1 auto; min-width: 0; overflow: hidden; direction: rtl; font-family: var(--font-mono); font-size: var(--t-xs); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-/* The repository and git line: one line that takes the room left before the copy controls and ends in "…" (said whole on
-   hover), so it wraps to a line of its own only below 12em. */
-.sv-gitline { flex: 1 1 12em; min-width: 0; font-size: var(--t-xs); line-height: var(--lh-xs); }
+/* The repository and git line: one line, whole beside the directory when it fits there and otherwise on the next line with
+   the copy controls; it ends in "…" (said whole on hover) only when it is wider than the head. */
+.sv-gitline { flex: 0 1 auto; min-width: 0; font-size: var(--t-xs); line-height: var(--lh-xs); }
 .sv-copies { display: inline-flex; margin-left: auto; }
 .sv-copy {
   display: inline-flex;
@@ -326,7 +326,7 @@ td.sv-n { font-variant-numeric: tabular-nums; }
 }
 button.sv-tl-row { cursor: pointer; }
 /* A row a pick brings into view keeps the sticky message box's height clear below it (--sv-foot-h, set by the page). */
-.sv-tl-row, .ag-row { scroll-margin-block-end: calc(var(--sv-foot-h, 0px) + var(--s2)); }
+.sv-tl-row, .ag-row, .tn-row { scroll-margin-block-end: calc(var(--sv-foot-h, 0px) + var(--s2)); }
 button.sv-tl-row:hover { background: var(--band); }
 .sv-tl-row[aria-current="true"] { background: var(--frame-on); }
 .sv-tl-row.flash { background: var(--selection); }
@@ -414,12 +414,60 @@ button.sv-tl-row:hover { background: var(--band); }
   font: var(--t-sm) / var(--lh-sm) var(--font-ui);
   text-align: left;
 }
+/* A row whose moment says its day too (a piece of feedback): "2026-11-05 14:02" in tabular figures. */
+.sv-ev.is-dated { grid-template-columns: 112px minmax(80px, 160px) minmax(0, 1fr); }
 button.sv-ev { cursor: pointer; }
 button.sv-ev:hover { background: var(--band); }
 .sv-ev time { color: var(--muted); font-size: var(--t-xs); }
 .sv-evloop { overflow: hidden; color: var(--ink-2); text-overflow: ellipsis; white-space: nowrap; }
 .sv-evtext { min-width: 0; overflow-wrap: anywhere; }
 .sv-evlist .bad .sv-evtext { color: var(--fail); }
+
+/* ---- Turns (Turns.tsx) ---------------------------------------------------------------------------------------------- */
+
+/* One card a turn, newest first: its head (when, which, how it went, its counts) over its lines, oldest first. A line is its
+   time, what it was, how long, how it went; the first lines of its kept text under it, three each; open, its facts, whole text
+   and feedback. Folded lines (an agent's rows, a run of identical calls) indent what they hold. */
+.tn-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.tn-card { border-bottom: 1px solid var(--rule); }
+.tn-head,
+.tn-row { width: 100%; min-width: 0; border: 0; background: none; color: var(--ink); font: var(--t-sm) / var(--lh-sm) var(--font-ui); text-align: left; cursor: pointer; }
+.tn-head { display: grid; grid-template-columns: 16px 48px max-content minmax(0, 1fr) auto; gap: var(--s2); align-items: center; min-height: 36px; padding: 0 var(--s2); }
+.tn-head:hover, .tn-row:hover { background: var(--band); }
+.tn-head b { font-weight: 600; }
+.tn-head svg, .tn-fold svg { flex: none; transform: rotate(-90deg); }
+:is(.tn-head, .tn-row)[aria-expanded="true"] svg { transform: none; }
+.tn-state { min-width: 0; overflow: hidden; color: var(--ink-2); text-overflow: ellipsis; white-space: nowrap; }
+.tn-counts { color: var(--muted); font-size: var(--t-xs); white-space: nowrap; }
+.tn-rows { margin: 0; padding: 0 0 var(--s2); list-style: none; }
+.tn-rows .tn-rows { padding: 0 0 0 var(--s4); }
+.tn-line { display: flex; align-items: center; gap: var(--s2); }
+.tn-row { display: grid; flex: 1; grid-template-columns: 64px minmax(120px, 2fr) 56px minmax(0, 3fr); gap: var(--s2); align-items: baseline; padding: var(--s1) var(--s2); }
+.tn-row > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tn-row[aria-expanded="true"] { background: var(--frame-on); }
+.tn-row.flash { background: var(--selection); }
+.tn-row time { color: var(--muted); }
+/* A folded line's name gives way first, with "…", and an agent's kind after it only once the name has nothing left to give: the
+   name's weight is a million times the kind's, so the kind's share of a loss rounds to nothing (as wall/lines.css orders a line). */
+.tn-fold { display: flex; align-items: center; gap: var(--s1); }
+.tn-fold :is(b, em) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tn-fold b { flex: 0 1e6 auto; }
+.tn-fold em { color: var(--muted); font-size: var(--t-xs); font-style: normal; }
+.tn-dur { color: var(--ink-2); font-variant-numeric: tabular-nums; text-align: right; }
+.tn-facts { color: var(--ink-2); font-size: var(--t-xs); }
+.tn-issue { flex: none; margin-right: var(--s2); font-size: var(--t-xs); }
+/* What sits under a line starts under its name. */
+:is(.tn-gap, .tn-texts, .tn-finding, .tn-open) { padding-left: calc(64px + var(--s4)); padding-right: var(--s2); }
+.tn-gap { padding-block: var(--s1); color: var(--muted); font-size: var(--t-xs); }
+.tn-texts { display: grid; gap: var(--s1); padding-bottom: var(--s1); }
+.tn-label, .tn-texts summary { color: var(--muted); font-size: var(--t-xs); }
+.tn-texts summary { cursor: pointer; }
+.tn-text { display: -webkit-box; margin: 0; overflow: hidden; color: var(--ink-2); font: var(--t-xs) / var(--lh-xs) var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.tn-finding { margin: 0; padding-bottom: var(--s1); color: var(--muted); font-size: var(--t-xs); }
+.tn-open { display: grid; gap: var(--s3); padding-block: var(--s2) var(--s3); }
+.tn-open .ag-facts { margin: 0; }
+.tn-open .sv-sh { margin: 0; }
+.tn-more { margin-top: var(--s3); }
 
 /* ---- the agent tree table ------------------------------------------------------------------------------------------- */
 

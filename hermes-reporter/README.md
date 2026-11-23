@@ -26,6 +26,7 @@ Hermes's rules are cited in `src/store.ts` (hermes-agent 0.20.6).
 | `costUsd` | null: the server prices `usageByModel`, as for every harness |
 | `cwd`, `projectRoot` | `sessions.cwd` (empty, unknown, when Hermes has none), `git_repo_root` |
 | `respond` | `off`, limit `observe-only` |
+| `rows` (the record) | each message of the session and of its subagents' runs: a user message of the session itself starts a turn, an assistant message is a model request, a tool result is a tool call. A compaction's summary is none of these and adds no row; a message Hermes writes again (`/retry`, `/undo`, `/compress`) replaces its row. A message older than 30 minutes when first read is not sent, so a session's record starts within the last 30 minutes. Hermes records no turn end, no call outcome and one token count a message: those are unknown. At `CODEX_REPORTER_CAPTURE=full` each row carries its text, redacted and cut on the machine; otherwise no message text is read |
 | everything else | unknown: git, context, plan, loop, files and rate limits are null or empty |
 
 A session reported live is read every second until a final report of it (ended, or `inactive`) is taken. A final report is sent
@@ -39,6 +40,8 @@ directory), so one env file serves both:
 
 - `CODEX_REPORTER_SERVER_URL`: the dashboard server (default `http://127.0.0.1:7487`)
 - `CODEX_REPORTER_TOKEN`: the admin secret
+- `CODEX_REPORTER_CAPTURE`: what of each session's record is sent: `off`, `trace` (rows without text, the default) or
+  `full` (rows with their text); any other value stops the reporter
 - `HERMES_HOME`: the Hermes home holding `state.db` (default `/hermes`, the sidecar's mount)
 
 ## The sidecar
@@ -49,9 +52,9 @@ which builds this workspace).
 Before `docker run`:
 
 - The env file, `~/.sitrep/codex-reporter.env`, is the one `scripts/install.ts --codex` writes for codex-reporter.
-  The sidecar reads only `CODEX_REPORTER_SERVER_URL` and `CODEX_REPORTER_TOKEN` from it. On a machine without
-  codex-reporter nothing here writes it: give `--env-file` a file of your own with those two `KEY=VALUE` lines, values
-  unquoted, mode `0600`.
+  The sidecar reads only `CODEX_REPORTER_SERVER_URL`, `CODEX_REPORTER_TOKEN` and `CODEX_REPORTER_CAPTURE` from it. On a
+  machine without codex-reporter nothing here writes it: give `--env-file` a file of your own with those `KEY=VALUE` lines
+  (the capture line only to change its default), values unquoted, mode `0600`.
 - The machine-id file (`~/.claude/sitrep-machine-id`, or under `$CLAUDE_CONFIG_DIR`) is made by codex-reporter
   or the Claude Code plugin, whichever first starts on the machine. On a machine with neither, nothing in this
   repository makes it before the sidecar runs; a reporter reads a file holding one line of 8 to 32 lowercase hex

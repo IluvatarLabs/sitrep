@@ -10,9 +10,9 @@
 import { randomBytes } from 'node:crypto';
 import express, { Router, type Request, type RequestHandler, type Response } from 'express';
 import type { Fleet } from './fleet.js';
-import { ADMIN_OWNER, digest, matchesSecret, nameKey, sourceAddress, type Identity, type Lockout } from './auth.js';
+import { ADMIN_OWNER, digest, matchesSecret, sourceAddress, type Identity, type Lockout } from './auth.js';
 import { logWords, shortDeliveryId, type AnswerError, type DeliveryTrail, type DropWhy } from './respond.js';
-import { ASK_CLOSE_OUTCOMES, DELIVERY_RESULTS, RESPOND_LIMITS, validateAsk, type Delivery, type DeliveryResult, type ReportReply, type RespondMe } from './protocol.js';
+import { ASK_CLOSE_OUTCOMES, DELIVERY_RESULTS, LIMITS, RESPOND_LIMITS, validateAsk, type Delivery, type DeliveryResult, type ReportReply, type RespondMe } from './protocol.js';
 import type { SessionRow } from './db.js';
 import { providerOf } from './derive.js';
 import type { Logger } from '../logger.js';
@@ -123,8 +123,10 @@ function trailLine(t: DeliveryTrail): string {
 export interface SignIns {
   /** Whether the request carries a live sign-in. Given the response, using it renews it, and its cookie with it. */
   live(req: Request, res?: Response): boolean;
-  /** A new sign-in, its cookie set on the response; past MAX_SIGN_INS the least recently used one ends. */
-  start(req: Request, res: Response): void;
+  /** The name the request's live sign-in was made under (`Admin` for one made before names were kept); null without a live sign-in. */
+  name(req: Request): string | null;
+  /** A new sign-in under `name`, its cookie set on the response; past MAX_SIGN_INS the least recently used one ends. */
+  start(req: Request, res: Response, name: string): void;
   /** Ends the request's sign-in and clears its cookie; whether a sign-in ended. */
   end(req: Request, res: Response): boolean;
   /** Ends every sign-in and clears the request's cookie; how many ended. */
@@ -137,13 +139,19 @@ export function signIns(fleet: Fleet, token: string | null): SignIns {
   const clearCookie = (res: Response): void => void res.clearCookie(RESPOND_COOKIE, { path: COOKIE_PATH });
   /** A sign-in's key in the database: bound to the secret it was made under. */
   const keyOf = (id: string): string => digest(`${token ?? ''}\u0000${id}`);
+  /** The request's sign-in as stored, whatever its age. */
+  const stored = (req: Request): { id: string; key: string; last_used_at: number; name: string | null } | null => {
+    const id = cookieValue(req, RESPOND_COOKIE);
+    if (token === null || !id) return null;
+    const key = keyOf(id);
+    const row = fleet.db.signIn(key);
+    return row ? { id, key, ...row } : null;
+  };
   return {
     live(req, res) {
-      const id = cookieValue(req, RESPOND_COOKIE);
-      if (token === null || !id) return false;
-      const key = keyOf(id);
-      const usedAt = fleet.db.signInUsedAt(key);
-      if (usedAt === null) return false;
+      const signIn = stored(req);
+      if (!signIn) return false;
+      const { id, key, last_used_at: usedAt } = signIn;
       const now = fleet.now();
       if (now - usedAt > SIGN_IN_MAX_AGE_MS) {
         fleet.db.endSignIns(key);
@@ -157,9 +165,13 @@ export function signIns(fleet: Fleet, token: string | null): SignIns {
       }
       return true;
     },
-    start(req, res) {
+    name(req) {
+      const signIn = stored(req);
+      return signIn && fleet.now() - signIn.last_used_at <= SIGN_IN_MAX_AGE_MS ? (signIn.name ?? ADMIN_OWNER) : null;
+    },
+    start(req, res, name) {
       const id = randomBytes(32).toString('hex');
-      fleet.db.useSignIn(keyOf(id), fleet.now(), MAX_SIGN_INS);
+      fleet.db.useSignIn(keyOf(id), fleet.now(), MAX_SIGN_INS, name);
       setCookie(req, res, id);
     },
     end(req, res) {
@@ -181,6 +193,8 @@ export interface BrowserAccess {
   guard: RequestHandler;
   /** Whether the request carries a live sign-in; using one renews it. */
   signedIn(req: Request, res: Response): boolean;
+  /** The name the request's sign-in was made under; `Admin` without one, which only a route behind `signedIn` reads. */
+  name(req: Request): string;
 }
 
 export function mountRespondRoutes(router: Router, d: RespondDeps): BrowserAccess {
@@ -205,10 +219,15 @@ export function mountRespondRoutes(router: Router, d: RespondDeps): BrowserAcces
     return row && fleet.isLive(row.id) ? row : null;
   };
 
-  /** Logs what became of a delivery; a failed write must not leave the delivery half updated. */
+  /**
+   * Logs what became of a delivery and keeps it in the session's Activity (who, what, how it ended; never what was said), but for
+   * `queued`, which is not yet how it ended. A failed write must not leave the delivery half updated.
+   */
   const logTrail = (t: DeliveryTrail): void => {
     try {
       logger.info(trailLine(t));
+      const fate = t.kind === 'result' ? t.result : t.why;
+      if (fate !== 'queued') fleet.noteAnswer(t.sessionId, t.delivery, fate, `${t.delivery.by} ${logWords(t.delivery).toLowerCase()}: ${FATES[fate]}`);
     } catch {
       // Dropped: the delivery's own update matters more than its log line.
     }
@@ -361,7 +380,7 @@ export function mountRespondRoutes(router: Router, d: RespondDeps): BrowserAcces
   browser.get('/me', (req, res) => {
     const on = enabled();
     const inNow = d.token !== null && signedIn(req, res);
-    const me: RespondMe = { enabled: on, signedIn: inNow, name: inNow ? ADMIN_OWNER : null, admin: inNow };
+    const me: RespondMe = { enabled: on, open: d.token === null, signedIn: inNow, name: inNow ? d.signIns.name(req) : null, admin: inNow };
     res.json(me);
   });
 
@@ -378,24 +397,24 @@ export function mountRespondRoutes(router: Router, d: RespondDeps): BrowserAcces
       return;
     }
     const body = (req.body ?? {}) as { name?: unknown; token?: unknown };
-    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    // Any name on one line: everyone holds the same secret, so a name is whatever its owner types.
+    const name = typeof body.name === 'string' ? body.name.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, LIMITS.name) : '';
     const token = typeof body.token === 'string' ? body.token.trim() : '';
     if (!name || !token) {
       fail(res, 400, 'enter your name and your token');
       return;
     }
-    // Only the admin secret, and only under the name Admin.
-    if (nameKey(name) !== nameKey(ADMIN_OWNER) || !matchesSecret(d.token, token)) {
+    if (!matchesSecret(d.token, token)) {
       const { n, locked } = lockout.fail(source);
       const lockNote = locked ? `; locked for ${String(Math.round(lockout.lockMs / 60_000))} minutes` : '';
       logger.warn(`sitrep: a sign-in to respond from ${source} was refused (${String(n)} wrong${lockNote})`);
-      fail(res, 401, 'wrong name or token');
+      fail(res, 401, 'wrong token');
       return;
     }
     lockout.succeed(source);
-    d.signIns.start(req, res);
-    logger.info(`sitrep: Admin signed in to respond from ${source}`);
-    res.json({ ok: true, name: ADMIN_OWNER, admin: true });
+    d.signIns.start(req, res, name);
+    logger.info(`sitrep: ${name} signed in from ${source}`);
+    res.json({ ok: true, name, admin: true });
   });
 
   // Streams close only when a sign-in ended, so a sign-out with none, which anyone can send, closes nothing.
@@ -428,7 +447,7 @@ export function mountRespondRoutes(router: Router, d: RespondDeps): BrowserAcces
   }));
 
   browser.post(`${ASK_PATH}/answer`, onSession((row, req, res) => {
-    const out = fleet.respond.answer(row.id, req.params.askId!, ADMIN_OWNER, req.body);
+    const out = fleet.respond.answer(row.id, req.params.askId!, d.signIns.name(req) ?? ADMIN_OWNER, req.body);
     if (out.ok) {
       audit(req, row, out.delivery);
       return accepted(res, out.delivery);
@@ -439,7 +458,7 @@ export function mountRespondRoutes(router: Router, d: RespondDeps): BrowserAcces
   }));
 
   browser.post('/sessions/:id/messages', onSession((row, req, res) => {
-    const out = fleet.respond.message(row.id, ADMIN_OWNER, req.body);
+    const out = fleet.respond.message(row.id, d.signIns.name(req) ?? ADMIN_OWNER, req.body);
     if (!out.ok) return answerError(res, out.err);
     audit(req, row, out.delivery);
     accepted(res, out.delivery, { queued: row.status === 'running' });
@@ -458,7 +477,7 @@ export function mountRespondRoutes(router: Router, d: RespondDeps): BrowserAcces
   });
 
   router.use('/respond', browser);
-  return { guard, signedIn };
+  return { guard, signedIn, name: (req) => d.signIns.name(req) ?? ADMIN_OWNER };
 }
 
 /** For the report route: whether the session takes answers now, and the messages and commands waiting for it. */

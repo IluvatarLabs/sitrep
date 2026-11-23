@@ -7,9 +7,12 @@
 // Every random choice comes from one seeded generator, so a seed always gives the same reports (timestamps aside). The
 // Simulator class is pure apart from its injected clock; main() does the HTTP. A development aid only, never proof that the
 // real reporters work.
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import { parseArgs } from 'node:util';
 import {
+  callHash,
+  errorKey,
   MACHINE_HEADER,
   MAIN_LOOP,
   reporterOf,
@@ -29,7 +32,10 @@ import {
   type Provider,
   type RateLimit,
   type Report,
+  type RowText,
   type TokenCounts,
+  type TraceRow,
+  type TurnEnd,
 } from '../server/src/fleet/protocol.ts';
 // The release's manifest: the reports claim its version by default, as this release's reporters do.
 import release from '../package.json' with { type: 'json' };
@@ -70,6 +76,10 @@ local thread, codex exec, or a machine without the Codex daemon), and most with 
 out as edit events with absolute paths; each loop edits its own files, and now and then two loops working in one
 checkout on one machine edit the same file. Loops message each other now and then, as Claude's SendMessage and Codex's
 send_input do.
+
+Every session sends its record: a row for each turn, model request and tool call. Sessions on the first simulated machine
+send made-up text with it, as a machine at full capture does; the others send none. Now and then a loop makes the same
+call three times in a row, and failed calls share three errors, so issues recur across sessions.
 
 On exit (duration reached, Ctrl-C or SIGTERM) every session it started is reported once more with status "done", so
 nothing is left running on the wall. Its reports say hostSurface "simulator".`;
@@ -278,7 +288,7 @@ const FAILS: Record<Provider, FailSpec[]> = {
       outputTail: ['turn completed with an error: server_overloaded'], evidence: ['codex_error_info: server_overloaded'] },
     { class: 'Context window exhausted', tool: 'model request', call: 'turn failed', exitCode: null,
       outputTail: ['turn completed with an error: context_window_exceeded'], evidence: ['codex_error_info: context_window_exceeded'] },
-    { class: 'Tool error', tool: 'Bash', call: 'cargo test -p consumer', exitCode: 101,
+    { class: 'Tool error', tool: 'Shell', call: 'cargo test -p consumer', exitCode: 101,
       outputTail: ['test batch::bounds_in_flight ... FAILED', 'thread panicked at batch.rs:88: in-flight 513 > 512'], evidence: ['exit code 101 from a command item'] },
   ],
 };
@@ -287,15 +297,40 @@ const FAILS: Record<Provider, FailSpec[]> = {
 const MAX_AGENTS = 195;
 /** Events a reporter holds until the server acks them; past this the oldest go. */
 const EVENT_QUEUE = 500;
+/** The record's rows held the same way. */
+const ROW_QUEUE = 2000;
+/** What a simulated turn asks, a shell runs and a failed call says: few enough that calls repeat and one error recurs across sessions. */
+const PROMPTS = ['Finish the current step and add a test for it', "This is broken again, why won't the build pass", 'Rebase on main and rerun the suite'];
+/** A later turn may correct the one before; a session never opens with it. */
+const CORRECTION = 'no, that is not what I asked for, keep the old endpoint';
+const COMMANDS = ['npm test', 'git status', 'npm run build'];
+const ERRORS = ['Error: ENOENT: no such file or directory, open config.yaml', 'npm ERR! Test failed. See above for more details.', 'fatal: not a git repository'];
+const FILES = ['src/config.ts', 'src/settlement/retry.ts', 'README.md'];
+const PATTERNS = ['retry', 'lastActivityAt', '*.test.ts'];
+const TASKS = ['Map the call sites', 'Review the diff', 'Run the test suite'];
+/** The shell tools, as each harness names its own: the only calls that fail here, as a command exits non-zero. */
+const SHELL = new Set(['Bash', 'exec_command']);
+/** Tools that read or write one file. */
+const FILE_TOOLS = new Set(['Read', 'Edit', 'Write']);
+
+/** A call's input as its tool takes it: a shell command, a file, a pattern or a task. */
+function callInput(tool: string, rng: Rng): string {
+  if (tool === 'Bash') return JSON.stringify({ command: rng.pick(COMMANDS) });
+  if (tool === 'exec_command') return JSON.stringify({ cmd: rng.pick(COMMANDS) });
+  if (FILE_TOOLS.has(tool)) return JSON.stringify({ file_path: rng.pick(FILES) });
+  if (tool === 'Grep' || tool === 'Glob') return JSON.stringify({ pattern: rng.pick(PATTERNS) });
+  if (tool === 'apply_patch') return JSON.stringify({ input: `*** Update File: ${rng.pick(FILES)}` });
+  return JSON.stringify({ description: rng.pick(TASKS) });
+}
 
 const TOOLS: Record<Provider, string[]> = {
   claude: ['Read', 'Grep', 'Edit', 'Bash', 'Glob', 'Read', 'Write'],
-  codex: ['Bash', 'Bash', 'apply_patch', 'Bash', 'update_plan', 'apply_patch'],
+  codex: ['exec_command', 'exec_command', 'apply_patch', 'exec_command', 'update_plan', 'apply_patch'],
 };
 /** The tools a main loop picks from: mostly launching agents and keeping its plan, with fewer edits than its agents make. */
 const LOOP_TOOLS: Record<Provider, string[]> = {
   claude: ['Agent', 'Read', 'TaskUpdate', 'Bash', 'Edit', 'Read', 'Agent'],
-  codex: ['Bash', 'spawn_agent', 'update_plan', 'apply_patch', 'Bash', 'wait'],
+  codex: ['exec_command', 'spawn_agent', 'update_plan', 'apply_patch', 'exec_command', 'wait'],
 };
 /** Tools whose calls edit a file and so go out as `edit` events. */
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'apply_patch']);
@@ -423,6 +458,10 @@ interface SimSession {
   /** Events the server has not acked yet, oldest first; eventSeq keeps their ids unique. */
   events: ActivityEvent[];
   eventSeq: number;
+  /** The record's rows the server has not acked yet, oldest first; rowSeq keeps their ids unique; `turn` is the one under way. */
+  rows: TraceRow[];
+  rowSeq: number;
+  turn: { id: string; t0: number } | null;
   /** Once done: how many times its final report went out. Three, or an ack, and it leaves the simulation. */
   finalSends: number;
   /** Loop ids (MAIN_LOOP or an agent id) that the last reply asked to watch, and each one's feed, newest 20 entries. */
@@ -618,6 +657,9 @@ class Simulator {
    * requests, none with a prompt over the 100K tokens the server prices at the long tier.
    */
   private use(s: SimSession, a: SimAgent | null, model: string, t: TokenCounts): void {
+    const now = this.now();
+    const request = { id: `req-${String(++s.rowSeq)}`, kind: 'request' as const, agentId: a ? a.report.id : null, t0: now - this.rng.int(800, 6000), t1: now, model, effort: a ? a.report.effort : s.tpl.effort, tokens: t, stop: 'tool_use' };
+    this.row(s, request, { message: 'Reading the handler before I change it.' });
     if (s.provider === 'codex') return addUsage(a ? a.usage : s.usage, model, t);
     const parts = Math.ceil((t.input + t.cacheRead + t.cacheWrite) / 90_000) || 1;
     for (let j = 0; j < parts; j++) {
@@ -667,6 +709,25 @@ class Simulator {
     }));
     this.telemetry.clear();
     return exports;
+  }
+
+  /** Queues a row of the record. The first simulated machine is at full capture and sends `text` with it; the others, at trace, none. */
+  private row(s: SimSession, r: Omit<TraceRow, 'text'>, text: RowText): void {
+    s.rows.push(s.machine.index === 0 ? { ...r, text } : r);
+    if (s.rows.length > ROW_QUEUE) s.rows.shift();
+  }
+
+  /** A turn of the main loop starts with a prompt, and ends when the loop goes idle or the session ends: its row goes at both. */
+  private turnStart(s: SimSession, first = false): void {
+    s.turn = { id: `turn-${String(++s.rowSeq)}`, t0: this.now() };
+    const prompt = this.rng.pick(first ? PROMPTS : [...PROMPTS, CORRECTION]);
+    this.row(s, { id: s.turn.id, kind: 'turn', agentId: null, t0: s.turn.t0, t1: null, end: null }, { prompt });
+  }
+
+  private turnEnd(s: SimSession, end: TurnEnd): void {
+    if (!s.turn) return;
+    this.row(s, { id: s.turn.id, kind: 'turn', agentId: null, t0: s.turn.t0, t1: this.now(), end }, {});
+    s.turn = null;
   }
 
   private ev(s: SimSession, kind: ActivityEvent['kind'], agentId: string | null, text: string, data: Record<string, unknown> | null = null): void {
@@ -735,11 +796,15 @@ class Simulator {
       exitKnown: tpl.provider === 'claude' || codexSeq % 3 === 2,
       events: [],
       eventSeq: 0,
+      rows: [],
+      rowSeq: 0,
+      turn: null,
       finalSends: 0,
       watch: [],
       feed: {},
     };
     s.files = this.workFiles(s);
+    this.turnStart(s, true);
     this.use(s, null, s.model, splitTokens(rng, rng.int(60_000, 220_000), s.provider));
     this.ev(s, 'start', null, `session.start · ${labelOf(s.model)} ${tpl.effort}`);
     if (!s.steps) {
@@ -930,27 +995,47 @@ class Simulator {
     return { skills, lastTool: calls ? rng.pick(LOOP_TOOLS[provider]) : null, toolCalls: calls, toolCounts, steps: { done: calls + rng.int(1, 4), total: null } };
   }
 
-  /** One tool call by a loop: counts it, may fail it (where exit status is known), and reports an edit with its path. */
-  private toolCall(s: SimSession, a: SimAgent | null, tool: string): void {
+  /**
+   * One tool call by a loop: counts it, may fail it (a shell command), adds its row, and reports an edit with its path.
+   * Claude Code says how every call ended, Codex only a shell command's; a call whose end is unknown leaves the run of
+   * failures as it was. Now and then the loop makes the same call twice more (`input` given), which is the run the
+   * repeated-call rule notes.
+   */
+  private toolCall(s: SimSession, a: SimAgent | null, tool: string, input?: string): void {
     const now = this.now();
     const failP = this.config.chaos ? 0.15 : 0.03;
-    const failed = this.rng.chance(failP);
+    const shell = SHELL.has(tool);
+    const failed = shell && this.rng.chance(failP);
+    const known = (a ? a.report.toolFailures !== null : s.exitKnown) && (s.provider === 'claude' || shell);
+    const args = input ?? callInput(tool, this.rng);
+    const error = this.rng.pick(ERRORS);
+    const key = failed && known ? errorKey(tool, error, shell) : null;
+    this.row(
+      s,
+      {
+        id: `tool-${String(++s.rowSeq)}`, kind: 'tool', agentId: a ? a.report.id : null, t0: now - this.rng.int(100, 4000), t1: now, tool,
+        outcome: known ? (failed ? 'failed' : 'ok') : null, exit: known && shell ? Number(failed) : null,
+        callHash: callHash(tool, args), errorHash: key === null ? null : createHash('sha256').update(key).digest('hex'),
+      },
+      { input: args, output: failed ? error : 'ok' },
+    );
     if (a) {
       a.report.toolCalls += 1;
       tally((a.report.toolCounts ??= {}), tool);
       a.report.lastTool = tool;
       a.report.lastActivityAt = now;
       a.report.toolOpen = this.rng.chance(0.3);
-      if (a.report.toolFailures !== null) a.report.toolFailures = failed ? a.report.toolFailures + 1 : 0;
+      if (known && a.report.toolFailures !== null) a.report.toolFailures = failed ? a.report.toolFailures + 1 : 0;
     } else {
       s.loop.toolCalls += 1;
       tally(s.loop.toolCounts, tool);
       s.loop.lastTool = tool;
       s.lastActivityAt = now;
       s.toolOpen = this.rng.chance(0.3);
-      if (s.exitKnown) s.toolFailures = failed ? s.toolFailures + 1 : 0;
+      if (known && s.exitKnown) s.toolFailures = failed ? s.toolFailures + 1 : 0;
     }
     this.maybeMessage(s, a);
+    if (input === undefined && this.rng.chance(0.01)) for (let i = 0; i < 2; i++) this.toolCall(s, a, tool, args);
     if (!EDIT_TOOLS.has(tool) || failed) return;
     // This loop's own files; now and then a file another loop in the same checkout edited lately, so the two collide.
     const checkout = this.checkoutOf(s);
@@ -986,6 +1071,7 @@ class Simulator {
     if (s.status === 'waiting') {
       if (--s.waitLeft <= 0) {
         this.ev(s, 'note', null, s.waitReason === 'permission' ? 'permission granted, resuming' : 'new prompt, resuming');
+        if (s.waitReason !== 'permission') this.turnStart(s);
         s.status = 'running';
         s.waitReason = null;
         s.waitNote = null;
@@ -1048,6 +1134,7 @@ class Simulator {
       // The turn ended on a model API failure: the server derives the errored state from this event.
       const category = rng.pick(API_FAILURES[s.provider]);
       this.ev(s, 'fail', null, `turn ended on a model API error: ${category}`, { category });
+      this.turnEnd(s, 'error');
       this.wait(s, 'idle', null, rng.int(15, 40));
     } else if (chaos && rng.chance(0.002)) {
       // A stall: running, nothing happening, sometimes inside a long tool call (which doubles the stuck threshold).
@@ -1063,6 +1150,7 @@ class Simulator {
     s.waitNote = note;
     s.waitLeft = ticks;
     s.toolOpen = false;
+    if (reason === 'idle') this.turnEnd(s, 'answer');
     s.lastActivityAt = this.now();
     if (reason === 'permission') this.ev(s, 'wait', null, `waiting on you: ${note ?? 'permission'}`);
   }
@@ -1081,6 +1169,7 @@ class Simulator {
     s.waitNote = null;
     s.toolOpen = false;
     s.endedAt = this.now();
+    this.turnEnd(s, 'answer');
     this.ev(s, 'plan', null, why);
     this.ev(s, 'end', null, `session.end · ${this.endReason(s, why)}`);
   }
@@ -1166,6 +1255,7 @@ class Simulator {
         ...(s.feed[a.report.id]?.length ? { activity: s.feed[a.report.id] } : {}),
       })),
       events: s.events.slice(0, 100),
+      rows: s.rows.slice(0, 100),
       machine: s.machine.info,
     });
   }
@@ -1215,11 +1305,12 @@ class Simulator {
     }
   }
 
-  /** The server acknowledged the first `n` events of a session's report, and with them an ended session's final report. */
-  ack(sessionId: string, n: number): void {
+  /** The server acknowledged the first `n` events and `rows` rows of a session's report, and with them an ended session's final report. */
+  ack(sessionId: string, n: number, rows: number): void {
     const s = this.byId(sessionId);
     if (!s) return;
     s.events.splice(0, n);
+    s.rows.splice(0, rows);
     if (s.status === 'done') s.finalSends = 3;
   }
 
@@ -1308,19 +1399,19 @@ const logSafe = (text: string): string => text.replace(/[\u0000-\u001f\u007f-\u0
 const explained = new Set<number>();
 
 /** Posts one report. Returns what the reply acknowledged and asks to watch, or null when the report should go again. */
-async function post(url: string, token: string | null, report: Report): Promise<{ acked: number; watch: string[] } | null> {
+async function post(url: string, token: string | null, report: Report): Promise<{ acked: number; ackedRows: number; watch: string[] } | null> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(token ? { [TOKEN_HEADER]: token } : {}) };
   try {
     const res = await fetch(`${url}/api/fleet/report`, { method: 'POST', headers, body: JSON.stringify(report), signal: AbortSignal.timeout(3000) });
     if (res.ok) {
-      const reply = (await res.json()) as { ackedEvents?: number; watch?: unknown };
+      const reply = (await res.json()) as { ackedEvents?: number; ackedRows?: number; watch?: unknown };
       const watch = Array.isArray(reply.watch) ? reply.watch.filter((x): x is string => typeof x === 'string') : [];
-      return { acked: reply.ackedEvents ?? 0, watch };
+      return { acked: reply.ackedEvents ?? 0, ackedRows: reply.ackedRows ?? 0, watch };
     }
     if (res.status === 400) {
       // The server called the report invalid: say why, and count it as delivered so it is never sent again.
       console.error(`sim: report rejected: ${logSafe((await res.text()).slice(0, 200))}`);
-      return { acked: report.events.length, watch: [] };
+      return { acked: report.events.length, ackedRows: report.rows?.length ?? 0, watch: [] };
     }
     // 401: the secret is missing or wrong. 403: the server does not expect the host name in --url.
     if ((res.status === 401 || res.status === 403) && !explained.has(res.status)) {
@@ -1365,7 +1456,7 @@ async function main(): Promise<void> {
       clock += 1000;
       for (const r of sim.step()) {
         emit(r);
-        sim.ack(r.session.id, r.events.length);
+        sim.ack(r.session.id, r.events.length, r.rows?.length ?? 0);
       }
       emitTelemetry();
     }
@@ -1387,7 +1478,7 @@ async function main(): Promise<void> {
     reports.forEach((r, i) => {
       const reply = replies[i];
       if (!reply) return;
-      sim.ack(r.session.id, reply.acked);
+      sim.ack(r.session.id, reply.acked, reply.ackedRows);
       sim.watch(r.session.id, reply.watch);
     });
     await Promise.all(sim.takeTelemetry().map((t) => postLogs(a.url, token, t)));

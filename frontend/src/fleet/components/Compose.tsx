@@ -6,6 +6,8 @@ import { useState, type KeyboardEvent } from "react";
 import { isKnownProvider } from "../../../../server/src/fleet/protocol";
 import { ASK_WORD, COMMANDS, type CantReason, type SlashCommand } from "../respond";
 import type { AskKind, ProviderName } from "../types";
+import { useRespond } from "../useRespond";
+import { NO_SECRET_WHY } from "./SignIn";
 
 /** The commands a session's harness takes from the dashboard (respond COMMANDS); none for a harness the console has no entry for. */
 export const commandsOf = (p: ProviderName): readonly SlashCommand[] => (isKnownProvider(p) ? COMMANDS[p] : []);
@@ -13,7 +15,8 @@ export const commandsOf = (p: ProviderName): readonly SlashCommand[] => (isKnown
 /**
  * Where a session that can't take this from here is answered, one line, with why on hover: answering is off, or the session
  * is answered in the Codex app or its terminal (a `claude -p` run takes no answers at all). A harness the console has no entry
- * for (Hermes) is only observed: it is answered in its own app.
+ * for (Hermes) is only observed: it is answered in its own app. On a server with no admin secret answering is off for want of
+ * one, not by a setting: OffNote says that on hover instead.
  */
 function offWords(edge: "off" | "cant", reason: CantReason, machine: string, app: string, provider: ProviderName): { head: string; why: string } {
   if (edge === "off") return { head: "Answering is off", why: "The server's answering or activity feed setting, or this session's respond option, is off." };
@@ -40,9 +43,11 @@ function offWords(edge: "off" | "cant", reason: CantReason, machine: string, app
 
 /** The note in place of the message box when answering is off or the session can't be answered from here. */
 export function OffNote({ edge, reason, machine, app, provider }: { edge: "off" | "cant"; reason: CantReason; machine: string; app: string; provider: ProviderName }) {
+  // A server with no admin secret (RespondMe.open) has no sign-in to answer under: the top bar's words for it (SignIn NoSecretNote).
+  const noSecret = useRespond()?.me?.open === true;
   const { head, why } = offWords(edge, reason, machine, app, provider);
   return (
-    <div className="compose-off" title={why}>
+    <div className="compose-off" title={edge === "off" && noSecret ? NO_SECRET_WHY : why}>
       <b>{head}</b>
     </div>
   );

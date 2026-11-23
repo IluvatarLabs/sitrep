@@ -1,9 +1,11 @@
 // The top bar's filter field. Plain words are one phrase matched against a session's name, project, branch and machine
-// (logic.ts filterSessions). A word with a prefix narrows one field: `s:` state, `m:` machine, `p:` project, `h:` harness; every
-// prefixed word must match, and a prefix with nothing after it yet narrows nothing. `m:` is also the machine the sidebar selects
+// (logic.ts filterSessions). A word with a prefix narrows one field: `s:` state, `m:` machine, `p:` project, `h:` harness, and on
+// History `model:`, `tool:`, `end:` and `fb:` (feedback), facts a live session does not have, so the Fleet lets every session
+// through them; every prefixed word must match, and a prefix with nothing after it yet narrows nothing. History sends the words to
+// the server (historyParams). `m:` is also the machine the sidebar selects
 // (scopeTerm, withScope): a machine's whole name picks that machine alone, a part of a name every machine it is in, and the start
 // of an id the machine it begins. `s:` is also what the Fleet's state chips write (withState). The field shows only on the pages
-// that apply every word (FILTERED_ROUTES). Pure.
+// that apply it (FILTERED_ROUTES), and its hint lists the words that narrow the page shown (filterHint). Pure.
 import type { Route } from "../../route";
 import { shortId } from "../groups";
 import { filterSessions, type StatusFilter } from "../logic";
@@ -11,14 +13,14 @@ import { providerInfo } from "../provider";
 import { stateOf, STATE_WORD, type State } from "../states";
 import type { MachineView, SessionView } from "../types";
 
-export type FilterField = "s" | "m" | "p" | "h";
+export type FilterField = "s" | "m" | "p" | "h" | "model" | "tool" | "end" | "fb";
 
 /** What each prefix narrows, for the field's hint. */
-export const FILTER_FIELDS: Record<FilterField, string> = { s: "state", m: "machine", p: "project", h: "harness" };
+const FILTER_FIELDS: Record<FilterField, string> = { s: "state", m: "machine", p: "project", h: "harness", model: "model", tool: "tool", end: "end reason", fb: "feedback" };
 
 type Term = { field: FilterField; value: string };
 
-const PREFIXED = /^([smph]):(.*)$/;
+const PREFIXED = /^(s|m|p|h|model|tool|end|fb):(.*)$/;
 
 /** The field's words: the plain ones as one phrase, and the prefixed ones. */
 function parse(q: string): { phrase: string; terms: Term[] } {
@@ -50,15 +52,37 @@ function matches(s: SessionView, { field, value }: Term, wholeNames: ReadonlySet
       return s.project.toLowerCase().includes(value) || (s.repoName ?? "").toLowerCase().includes(value);
     case "h":
       return s.provider.includes(value) || providerInfo(s.provider).app.toLowerCase().includes(value);
+    default:
+      return true;
   }
 }
 
+/** The prefixes a live session answers to (matches): what narrows the Fleet and Plans. */
+const LIVE_FIELDS: readonly FilterField[] = ["s", "m", "p", "h"];
+
 /**
- * The pages that apply the field: FleetApp hands every view the filtered sessions, and only the Fleet and Plans read them
- * (History and Machines apply only its `m:` word, scopedMachines; Settings nothing; a session's page is one session), which is
- * why the field shows only there. Elsewhere the top bar keeps the field's place with the field unseen, its words kept.
+ * The pages that apply the field, each with the prefixes that narrow it: FleetApp hands every view the filtered sessions, and the
+ * Fleet and Plans read them; History sends its words to the server (historyParams, its `m:` word as machines, scopedMachines),
+ * all but `s:`. Machines applies only `m:`, Settings nothing, and a session's page is one session, so elsewhere the top bar keeps
+ * the field's place with the field unseen, its words kept; as it does while History shows its Issues, a stored session's page or
+ * a comparison, which no word narrows (shell.css).
  */
-export const FILTERED_ROUTES: ReadonlySet<Route> = new Set<Route>(["now", "plans"]);
+const NARROWS: Partial<Record<Route, readonly FilterField[]>> = { now: LIVE_FIELDS, plans: LIVE_FIELDS, history: ["m", "p", "h", "model", "tool", "end", "fb"] };
+export const FILTERED_ROUTES: ReadonlySet<Route> = new Set(Object.keys(NARROWS) as Route[]);
+
+/** The field's hint on a page: the prefixes that narrow it, each with what it narrows; none where the field is unseen. */
+export const filterHint = (route: Route): string => (NARROWS[route] ?? []).map((f) => `${f}: ${FILTER_FIELDS[f]}`).join(" · ");
+
+/**
+ * The field as History's query (routes.ts historyQuery): the plain words as `q`, and `p:`, `h:`, `model:`, `tool:`, `end:` and
+ * `fb:` each as its parameter, the last of a kind winning, since the server takes one value a parameter. `m:` is the machines
+ * (scopedMachines); `s:`, a live state, says nothing of an ended session.
+ */
+export function historyParams(q: string, into: URLSearchParams): void {
+  const { phrase, terms } = parse(q);
+  if (phrase) into.set("q", phrase);
+  for (const t of terms) if (t.field !== "s" && t.field !== "m") into.set(t.field, t.value);
+}
 
 /** The sessions the field lets through, in the order given. */
 export function applyFilter(list: readonly SessionView[], q: string): SessionView[] {

@@ -8,6 +8,9 @@ import type { ModelFamily } from "../../types";
 import { Unknown } from "../../ui/Unknown";
 import "./session.css";
 
+/** How long a row picked or linked from outside the page stays marked (an agent, a Turns row). */
+export const FLASH_MS = 2000;
+
 /** A clock time as the console writes one: HH:MM, local. */
 export const clock = (t: number): string => fmtClock(t).slice(0, 5);
 

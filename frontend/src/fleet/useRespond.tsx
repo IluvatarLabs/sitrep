@@ -14,11 +14,13 @@ export interface RespondContext {
   settingsOn: boolean;
   /** The server's last word on this browser's sign-in; null until it first answers. Answering also needs `me.enabled`. */
   me: RespondMe | null;
+  /** The first check of the sign-in has settled, answered or failed: a read that depends on who the reader is waits for it. */
+  checked: boolean;
   /** A sign-in ended while the page was open: the next form says so once. */
   expired: boolean;
   /** Asks the server again, after a refusal that says the sign-in is gone. */
   refresh: () => Promise<void>;
-  signIn: (secret: string) => Promise<SignInResult>;
+  signIn: (name: string, secret: string) => Promise<SignInResult>;
   signOut: () => Promise<void>;
   /** The session the answer panel is open for. Closing it gives focus back to what opened it. */
   openFor: string | null;
@@ -35,14 +37,24 @@ const RespondState = createContext<RespondContext | null>(null);
 /** The console's answering state; null outside the provider, where nothing about answering shows. */
 export const useRespond = (): RespondContext | null => useContext(RespondState);
 
+/**
+ * Whether this reader may read kept text (a row's text, an agent's whole prompt and answer, a search over either, an issue's
+ * error): signed in, or, on a server with no admin secret, which has no sign-in, anyone. The server's own rule (routes.ts
+ * `readsKept`). Reading only: each of the owner's actions needs a sign-in on every server (adminRoutes.ts).
+ */
+export function useReadsKept(): boolean {
+  const me = useRespond()?.me;
+  return me?.signedIn === true || me?.open === true;
+}
+
 /** How often the sign-in is checked, so one that ended is noticed before the next answer. */
 const CHECK_MS = 60_000;
 
-type SignIn = Pick<RespondContext, "me" | "expired" | "refresh" | "signIn" | "signOut">;
+type SignIn = Pick<RespondContext, "me" | "expired" | "checked" | "refresh" | "signIn" | "signOut">;
 
 /** The server's word on the sign-in, asked at once, again whenever its switches change, and every CHECK_MS; signing in and out. */
 function useSignIn(api: RespondApi, settingsOn: boolean): SignIn {
-  const [seen, setSeen] = useState<{ me: RespondMe | null; expired: boolean }>({ me: null, expired: false });
+  const [seen, setSeen] = useState<{ me: RespondMe | null; expired: boolean; checked: boolean }>({ me: null, expired: false, checked: false });
   // Signed in at the last answer: signed out at the next means the sign-in ended.
   const wasIn = useRef(false);
 
@@ -52,9 +64,10 @@ function useSignIn(api: RespondApi, settingsOn: boolean): SignIn {
         (me) => {
           const ended = wasIn.current && !me.signedIn;
           wasIn.current = me.signedIn;
-          setSeen((was) => ({ me, expired: was.expired || ended }));
+          setSeen((was) => ({ me, expired: was.expired || ended, checked: true }));
         },
-        () => undefined, // The server can't be reached: the last answer stands.
+        // The server can't be reached: the last answer stands, and the first check has settled all the same.
+        () => setSeen((was) => (was.checked ? was : { ...was, checked: true })),
       ),
     [api],
   );
@@ -67,10 +80,10 @@ function useSignIn(api: RespondApi, settingsOn: boolean): SignIn {
   }, [refresh, settingsOn]);
 
   const signIn = useCallback(
-    async (secret: string): Promise<SignInResult> => {
+    async (name: string, secret: string): Promise<SignInResult> => {
       if (!secret) return "empty";
       try {
-        await api.signIn(secret);
+        await api.signIn(name, secret);
       } catch (err) {
         if (!(err instanceof RespondError)) return "wrong";
         // The server has no admin secret to check against (respondRoutes.ts sign-in).

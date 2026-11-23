@@ -224,6 +224,7 @@ function ServerRows({ body, signedIn, save, error }: { body: SettingsBody; signe
       ) : null}
       <SwitchRow label="Answering" on={s.respond} fallback={d.respond} signedIn={signedIn} note={s.respond && !s.activityFeed ? "Needs the activity feed" : null} onSave={(on) => save({ respond: on })} />
       <SwitchRow label="Activity feed" on={s.activityFeed} fallback={d.activityFeed} signedIn={signedIn} onSave={(on) => save({ activityFeed: on })} />
+      <SwitchRow label="Keep a record of turns and calls" on={s.trace} fallback={d.trace} signedIn={signedIn} onSave={(on) => save({ trace: on })} />
       <SwitchRow
         label="Require sign-in to view"
         hint="Signed out, this dashboard shows only the sign-in."
@@ -490,7 +491,8 @@ function Section({ id, title, meta, children }: { id: string; title: string; met
 }
 
 export function SettingsView({ fleet, browser, topBar }: ViewProps & { topBar: TopBarSwitch }) {
-  const signedIn = useRespond()?.me?.signedIn === true;
+  const me = useRespond()?.me;
+  const signedIn = me?.signedIn === true;
   const { load, saveError, save } = useServerSettings(fleet);
   const body = load.state === "ok" ? load.data : null;
   const pending = load.state === "loading" ? <p className="ui-empty">Loading…</p> : load.state === "error" ? <p className="ui-empty">{`Could not load: ${load.message}`}</p> : null;
@@ -499,7 +501,8 @@ export function SettingsView({ fleet, browser, topBar }: ViewProps & { topBar: T
       <header className="ui-view-head">
         <h1>Settings</h1>
       </header>
-      <Section id="st-server" title="Server" meta={signedIn ? null : "Sign in to change"}>
+      {/* A server with no admin secret has no sign-in to change them under (RespondMe.open). */}
+      <Section id="st-server" title="Server" meta={signedIn ? null : me?.open ? "Cannot be changed until the server has an admin secret" : "Sign in to change"}>
         {body ? <ServerRows body={body} signedIn={signedIn} save={save} error={saveError} /> : pending}
       </Section>
       <Section id="st-prices" title="Prices" meta="$ per million tokens">

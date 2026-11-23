@@ -22,7 +22,7 @@ export interface FleetState {
   serverTime: number;
   server: StateBody["server"] | null;
   config: LifecycleConfig;
-  /** The server's answering and activity feed switches; off until the first snapshot. */
+  /** The server's answering, activity feed and record switches; off until the first snapshot. */
   settings: ServerSettings;
 }
 
@@ -46,7 +46,7 @@ export const initialState: Readonly<FleetState> = {
   serverTime: 0,
   server: null,
   config: DEFAULT_LIFECYCLE,
-  settings: { respond: false, activityFeed: false },
+  settings: { respond: false, activityFeed: false, trace: false },
 };
 
 /** Each message the reducer takes, by its type: the server's stream events, and the page's own (a lost stream, a failed first

@@ -9,6 +9,7 @@ Contents:
 - [Add a machine](#add-a-machine)
 - [Hermes](#hermes)
 - [In a Claude Code session](#in-a-claude-code-session)
+- [The record](#the-record)
 - [Ports](#ports)
 - [Settings](#settings)
 - [Files and services](#files-and-services)
@@ -30,8 +31,8 @@ Contents:
 | Every machine with Codex | The Codex plugin `sitrep-codex` (hooks that write a local spool) and the `codex-reporter` process (reads the spool, the session files and the Codex daemon; sends the reports) | Codex, from this repository's plugin marketplace; a user service |
 
 Reporters push to one URL, so moving the server is a change of URL in each reporter. While the server cannot be
-reached, a reporter keeps each session's latest state and up to 500 events (the oldest are dropped) and sends them when
-it is back. Sessions that start and end during the gap, chart samples and live visibility are lost. So is a Claude
+reached, a reporter keeps each session's latest state, up to 500 events and up to 500 of the record's rows (the oldest
+are dropped, and dropped rows show as a counted gap) and sends them when it is back. Sessions that start and end during the gap, chart samples and live visibility are lost. So is a Claude
 session's usage during the gap: Claude Code's telemetry keeps no batch it failed to send.
 
 ## Deploy the server
@@ -166,6 +167,48 @@ The plugin adds one command:
   for that session id (a `/clear` starts a new id without it). The name the dashboard shows is the first of: this
   name, the title Claude Code gave the session, the `sessionName` option, a worktree's branch or folder, the
   repository folder, and `session-` with the first six characters of the id.
+- `/sitrep mute` stops this session's text from the next turn on, on a machine at `full` capture: its rows still go,
+  without their text. `/sitrep unmute` turns it back on. Kept for that session id across a plugin reload.
+
+## The record
+
+SITREP keeps a row for every turn, model request and tool call of every session. A session's **Turns** view shows
+them, live and after it ends; History's Issues, the turn and call counts in Compare and Group by, the search over
+kept text and the rows in an Export all come from them. Rows are kept as long as their session (`RETAIN_SESSIONS_MS`) and deleted with
+it.
+
+**What a machine sends is that machine's setting:**
+
+| Level | The machine sends |
+|---|---|
+| `off` | No rows |
+| `trace` (the default) | A row for each turn, model request and tool call: when, in which loop, the model and its tokens, the tool's name, how the call ended and its exit code, and two hashes: one of the tool and its input, by which a repeated call is seen, and one of the tool and the first 80 characters of a failed call's error, by which the same error is recognised across sessions. No text. The hashes are not salted: someone who reads the rows and guesses a call's exact input, or an error's opening words, can check the guess against them |
+| `full` | The rows with their text: prompts, the model's messages and visible reasoning, tool input and output. The Claude plugin also sends each agent's whole prompt and answer, as `fullPrompts` does. Each text is redacted on the machine by the reporters' secret rules and cut at 20,000 characters |
+
+- Set it with the Claude plugin's `capture` option ([Claude plugin options](#claude-plugin-options)) and with
+  `CODEX_REPORTER_CAPTURE` for Codex and Hermes. `/sitrep mute` stops one Claude session's text.
+- **One switch turns the record off for the whole fleet:** Settings → Server → Keep a record of turns and calls, or
+  `SITREP_TRACE=off` as its default. Reporters then send no rows.
+- **Reading kept text needs a sign-in.** Rows, counts, issues and feedback are read like everything else. A row's
+  text, an agent's whole prompt and answer (`fullPrompts`), a search over kept text, an issue's error text and the
+  export are served only to a signed-in browser. A server with no admin secret has no sign-in: it serves kept text
+  to anyone who can reach it, as it serves everything else, and the export, feedback, claims and closing an issue,
+  which need a sign-in, are not available. Set a secret before turning `full` on.
+- **Kept text crosses the LAN in clear**, like every report ([Security](#security-one-owner-one-secret)), whatever the
+  dashboard's sign-in does. Redaction is by pattern: it removes what is shaped like a secret, not source code or
+  personal data. Turn `full` on only for machines and networks where that is acceptable.
+- **Claude's reasoning** is in the record only where Claude Code has it. Interactive sessions get redacted thinking
+  unless you set `"showThinkingSummaries": true` in your own Claude Code settings; SITREP never changes that setting.
+  Without it, Turns shows what the model said between its calls. Codex's reasoning is its summaries where a session
+  has them; Hermes's is its `reasoning` column.
+- **Unknown stays unknown.** Codex reports a tool call's outcome only for shell commands, and Hermes for none, so those
+  calls read "—" and raise no issues, and a session none of whose calls has an outcome reads "—" under Failed, not 0; one
+  with an outcome for only some reads its count with a "+" ("0+" for a Codex session whose commands all passed). Rows a reporter had to drop while the server was unreachable show as a counted
+  gap.
+- **Names.** Sign in with the admin secret and any name. Everyone holds the same secret, so a name is whatever its
+  owner typed: it says who answered, left feedback, closed an issue or claimed something, and proves nothing.
+- **Claims** restrict nothing: anyone signed in can still answer, and the terminal still wins. A session's claim ends
+  when the session no longer needs someone, and lasts across a server restart.
 
 ## Ports
 
@@ -179,7 +222,7 @@ port.
 
 ## Settings
 
-**In the dashboard.** Signed in, Settings → Server changes answering, the activity feed, the stuck thresholds per model
+**In the dashboard.** Signed in, Settings → Server changes answering, the activity feed, the record of turns and calls, the stuck thresholds per model
 family, the lifecycle timers and retention; signed out, it shows them read-only. The server keeps them in its database
 and applies them at once; the `server.env` values below are their defaults. A row's Reset removes the change made in
 Settings, so the `server.env` value applies again, including one edited there later (after a restart). Settings takes
@@ -207,6 +250,7 @@ already in the environment, such as one from the service's `server.env`, wins ov
 | `SITREP_ALLOWED_HOSTS` | empty | Host names other machines type, comma-separated. `localhost`, `::1`, `127.x.x.x` and the `HOST` address always work; with `HOST=0.0.0.0` any IP address does |
 | `SITREP_RESPOND` | `on` | Whether sessions can be answered from the dashboard. `on` or `off` (also `true`/`false`, `1`/`0`); any other value stops the server at start. Answering also needs the activity feed on |
 | `SITREP_ACTIVITY_FEED` | `on` | Whether the live activity feed is asked for. Same values as above |
+| `SITREP_TRACE` | `on` | Whether the server keeps [the record](#the-record) of turns, model requests and tool calls. Off, reporters send none, and sessions from then on have no record. Same values as above; the default for the switch in Settings |
 | `SITREP_PRICES` | `<repository>/server/prices.json` | Price overrides, laid over LiteLLM's table. A bad file stops the server at start |
 | `SITREP_REQUIRE_SIGN_IN_TO_VIEW` | `off` | Whether the dashboard shows anything before signing in. Same values as `SITREP_RESPOND`; the default for the switch in Settings |
 | `SITREP_LOG_LEVEL` | `info` | How much it logs: `debug`, `info`, `warn` or `error`; any other value reads as `info` |
@@ -235,6 +279,7 @@ A timer, retention or stuck setting that is not a number of 0 or more reads as i
 | `CODEX_REPORTER_TOKEN` | none | The server's admin secret |
 | `CODEX_REPORTER_RESPOND` | `everything` | How far Codex sessions here take answers: `off`, `questions`, `questions-and-plans` or `everything` |
 | `CODEX_REPORTER_ACTIVITY_FEED` | on | Send the activity feed of a loop someone is watching; on unless `off`, `false` or `0`. Answering needs it on |
+| `CODEX_REPORTER_CAPTURE` | `trace` | What this machine sends of each session's [record](#the-record): `off`, `trace` or `full`. `hermes-reporter` reads the same key. Any other value stops the reporter at start |
 | `CODEX_REPORTER_CODEX_BIN` | `codex` | The `codex` executable it runs to find the Codex daemon, looked up on the service's `PATH` |
 
 Like Codex and Claude Code themselves, it also follows `CODEX_HOME` (default `~/.codex`) to find Codex's session files
@@ -256,7 +301,8 @@ its default.
 | `heartbeatMs` | `5000` | Report at least this often even when nothing changed, in milliseconds; less than 1000 reads as 1000 |
 | `sessionName` | empty | A display name for this machine's sessions, used after the `/sitrep name` name and Claude Code's own title ([In a Claude Code session](#in-a-claude-code-session)). Usually left empty |
 | `showStatus` | on | Show the reporter's state in the status line under the prompt: `dashboard v<version> ● N live`, where the version is the dashboard's, as shown under its name (the plugin's own is in `/sitrep`). In place of the count it shows `○ connecting` (with no version until the server first answers), `○ offline`, `○ token refused`, or `○ report rejected` when the server rejects this session's reports. After the count comes `· update plugin` or `· update server` when the versions do not fit, or `· update available` when a newer plugin exists. `⚠` comes first when the server is plain HTTP beyond this machine |
-| `fullPrompts` | off | Send each agent's whole task prompt and final answer (up to 20,000 characters each, secrets redacted) so the dashboard can show them in full. Off, only the first 400 characters are sent |
+| `fullPrompts` | off | Send each agent's whole task prompt and final answer (up to 20,000 characters each, secrets redacted) so the dashboard can show them in full. Off, only the first 400 characters are sent. Reading them in the dashboard needs a sign-in |
+| `capture` | `trace` | What this machine sends of each session's [record](#the-record): `off`, `trace` or `full`; any other value reads as `off`. `full` also sends what `fullPrompts` does |
 
 ## Files and services
 
@@ -287,12 +333,16 @@ LAN reaches the server through an SSH tunnel ([Off the LAN](#off-the-lan)). What
 - **The secret can answer.** With it, anyone can answer prompts and send messages to any Claude Code session, and any
   daemon-hosted Codex session, on any machine. Your sign-in in the browser also crosses the LAN in clear.
 - **Reading is open.** Anyone who can reach port 7487 sees every session without signing in: names, machines, paths,
-  branches, plan steps, and bounded, redacted excerpts of prompts, answers, commands, failed-tool output and messages
-  agents send each other.
+  branches, plan steps, bounded, redacted excerpts of prompts, answers, commands, failed-tool output and messages
+  agents send each other, and each session's record without its text: its turns, model requests and tool calls with
+  their times, models, token counts and outcomes.
 - **What leaves each machine.** The reports carry all of that in clear over the LAN. Their free text is redacted on the
   machine and cut to fixed lengths. While a session waits on you, its report also carries the open ask as the native
   prompt shows it, redacted: the questions, the plan, or the tool call and its input, including the redacted Codex patch
   while a file approval is open. The server holds an open ask in memory only and shows it only after sign-in.
+- **What full capture sends.** A machine set to `full` ([The record](#the-record)) also sends its sessions' prompts, the
+  model's text and tool input and output, redacted and cut, in clear over the LAN. The server stores them and shows
+  them only after sign-in. The default, `trace`, sends no text.
 - **What Claude Code's telemetry sends.** Its log export carries every event Claude Code emits, and with each the
   account's email, user and organization ids (prompt and response text arrive as `<REDACTED>`); it crosses the LAN in
   clear like the reports. The server reads only the `api_request` events' usage fields (request, session and agent ids,
@@ -327,12 +377,13 @@ sign-in lasts 400 days unused in that browser, and each use renews it.
 ## Back up and restore
 
 Everything the dashboard keeps is the SQLite database on the server: sessions, agents, events, chart samples and
-History, for as long as the retention settings say. It holds no transcripts and does not back up any provider session:
+History with its record, for as long as the retention settings say. It holds no transcripts unless a machine is set to keep text
+(`capture` at `full`, or `fullPrompts`), and it does not back up any provider session:
 Claude Code and Codex keep those on each machine (`~/.claude`, `~/.codex`), and restoring the dashboard cannot bring a
 session back.
 
 **From the dashboard:** Settings → About → Download backup (signed in) gives a consistent copy of the database
-(`VACUUM INTO`) without stopping the server. Keep `server.env` too: it holds the admin secret.
+(SQLite's online backup, page for page) without stopping or holding the server. Keep `server.env` too: it holds the admin secret.
 
 **From the shell** (copy the `-wal` and `-shm` files too when they are there):
 
@@ -455,8 +506,10 @@ config here holds for it (codex-reporter's, the telemetry token file's and, on t
 checks whether this machine's reporter versions fit, as the server judges them for Machines (a version no live session
 reports is "last reported"), and the machine id. A sender whose secret it cannot check gets a line saying why (the
 plugin's own copy is in Claude Code's secure storage, which doctor cannot read). Each problem prints the command that
-fixes it, or the section here that does, and doctor exits 1 when there is one. A machine's row in Machines and
-Settings → About give this command.
+fixes it, or the section here that does, and doctor exits 1 when there is one. Claude Code or Codex on a machine
+without its reporter is not a problem: doctor notes that it "reports nothing from here", with the command that would
+install the reporter, and does not start Codex to look further. A machine's row in Machines and Settings → About give
+this command.
 
 ## Troubleshooting
 

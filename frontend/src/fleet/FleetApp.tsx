@@ -9,7 +9,7 @@ import "./ui/tokens.css";
 import "./ui/ui.css";
 import "./shell/shell.css";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { agentIn, ALL_VIEWS, hashFor, movedFrom, routeFor, sessionIn, type MovedView, type View } from "../route";
+import { agentIn, ALL_VIEWS, hashFor, movedFrom, routeFor, sessionIn, stepIn, type MovedView, type View } from "../route";
 import { needYouCount, useNotifications, useNotifyPref, useTitleCount } from "./attention";
 import { PAGE, rowAgent, type ActivityFilter, type ActivitySource } from "./components/ActivityList";
 import { ResizeHandle } from "./components/ResizeHandle";
@@ -320,19 +320,15 @@ function Frame({ fleet, liveSession, needYou, waits, every, onEvery, notify, pan
   const selSession = selId === null ? null : Object.hasOwn(fleet.sessions, selId) ? fleet.sessions[selId]! : liveSession(selId);
   // The open session's events, read once for its page and the inspector alike, so the two never disagree.
   const sessionEvents = useSessionEvents(selSession?.id ?? null, fleet.events);
-  // The open session as the page last showed it, so an end the page saw is told from one a snapshot inferred.
-  const lastShown = useRef<SessionView | null>(null);
-  if (selSession) lastShown.current = selSession;
-  // A session's page whose session left on an end the page saw (its own Done view, or the server's `removed` for one that went
-  // silent; never a reason store goneSince inferred, as usePins) stays open as History's stored, read-only page for it. One
-  // deleted, not live, or an address naming none it can read: say so and go back.
+  // A session's page whose session is not live (it ended while the page showed it, or the address is an old link) opens as
+  // History's stored, read-only page for it, at the row the address names; History says so when the server does not know it.
+  // One deleted, or an address naming none it can read: say so and go back.
   useEffect(() => {
     if (route !== "session" || !ready || selSession) return;
     const gone = selId !== null && Object.hasOwn(fleet.gone, selId) ? fleet.gone[selId] : undefined;
-    const sawDone = lastShown.current?.id === selId && lastShown.current.status === "done";
-    if (selId !== null && (sawDone || gone === "dropped")) {
+    if (selId !== null && gone !== "deleted") {
       switched.current = true;
-      replaceHash(storedHash(selId));
+      replaceHash(storedHash(selId, stepIn(hash)));
       return;
     }
     setNotice(gone === "deleted" ? "The session was deleted" : "Not live; ended sessions are in History");
@@ -414,12 +410,12 @@ function Frame({ fleet, liveSession, needYou, waits, every, onEvery, notify, pan
   else if (display.on) view = <DisplayView fleet={fleet} now={now} layout={display.layout} background={prefs.prefs.background} onLeave={display.exit} />;
   else if (route === "now") {
     view = <NowView fleet={fleet} sessions={filtered} now={now} browser={browser} refusals={refusals} prefs={prefs} scope={scope} onScope={scopeToName} query={query} onQuery={setQuery} />;
-  } else if (route === "session") view = selSession ? <SessionPage fleet={fleet} session={selSession} now={now} events={sessionEvents} /> : null;
+  } else if (route === "session") view = selSession ? <SessionPage fleet={fleet} session={selSession} now={now} events={sessionEvents} step={stepIn(hash)} /> : null;
   else if (route === "settings") {
     view = <SettingsView fleet={fleet} sessions={filtered} now={now} browser={browser} refusals={refusals} topBar={{ hidden: collapsed.top, controls: TOP_ID, onToggle: () => toggle("top") }} />;
   } else {
     const Page = VIEW_OF[route];
-    view = <Page fleet={fleet} sessions={filtered} now={now} browser={browser} refusals={refusals} scope={scope} prefs={prefs} />;
+    view = <Page fleet={fleet} sessions={filtered} now={now} browser={browser} refusals={refusals} scope={scope} query={query} prefs={prefs} />;
   }
 
   // Each pane's width: 0 while folded or in display mode, else the one dragged to (or its default).

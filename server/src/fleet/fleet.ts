@@ -1,12 +1,14 @@
 // The fleet service. It owns the live set, turns reports and the timers' sweeps into SSE messages, answers the reads, and
 // holds the live server settings. Storage is FleetDb; the rules are in ingest.ts, derive.ts and alerts.ts. The clock is
 // injected, so lifecycle tests move time without waiting.
+import { setImmediate } from 'node:timers/promises';
 import { randomBytes } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import path from 'node:path';
-import type { EditRow, EventFilter, EventRow, FleetDb, SessionRow } from './db.js';
-import { activityView, computeKpis, costParts, costReasonOf, family, firstMinuteSecond, fromJson, isUnused, lastCompleteSecond, MESSAGE_LIMIT, MESSAGE_WINDOW_MS, messageView, nameOf, projectOf, providerOf, SERIES_POINTS, sessionView, wholeSeconds, type DeriveConfig } from './derive.js';
-import { COLLISION_WINDOW_MS, collidingEdit, collisionsFor, loopName } from './alerts.js';
+import { rowView, type EditRow, type EventFilter, type EventRow, type FleetDb, type IssueCount, type IssueStateRow, type SessionRow } from './db.js';
+import { activityView, computeKpis, costParts, costReasonOf, firstMinuteSecond, fromJson, isUnused, lastCompleteSecond, MESSAGE_LIMIT, MESSAGE_WINDOW_MS, messageView, nameOf, projectOf, providerOf, recordOf, resumeCommand, SERIES_POINTS, sessionView, wholeSeconds, type DeriveConfig } from './derive.js';
+import { COLLISION_WINDOW_MS, collidingEdit, collisionsFor, loopName, needsSomeone, repeated, REPEAT_RULE, REPEAT_RUN, type CallRun } from './alerts.js';
+import { filterHistory, groupHistory, type GroupFacts, type HistoryFilter } from './history.js';
 import { addDays, localDay } from './days.js';
 import { REPORTER_SUPPORT, checkReporter, serverBuild, serverVersion, supportFor } from './compat.js';
 import { ingestReport, ingestRequests, type IngestResult } from './ingest.js';
@@ -17,8 +19,8 @@ import { ActivityStore } from './activity.js';
 import { RespondStore } from './respond.js';
 import { BUILT_IN, patched, settingsFromEnv, storedPatch, type SettingsChange, type SettingsPatch } from './settings.js';
 import { SseHub } from './sse.js';
-import { LIMITS } from './protocol.js';
-import type { ActivityView, EditableSettings, HistoryRow, Kpis, MachineState, MachineView, PriceRowView, RemovedReason, Report, SessionView, StateBody } from './protocol.js';
+import { family, LIMITS, ROWS_PAGE, TEXT_PREVIEW } from './protocol.js';
+import type { ActivityView, Claim, Delivery, EditableSettings, Feedback, GitInfo, GroupKey, HistoryGroup, HistoryRow, IssueDetail, IssueView, KeptText, Kpis, MachineInfo, MachineState, MachineView, PriceRowView, RemovedReason, Report, RowsReply, SessionView, StateBody, TraceRow } from './protocol.js';
 import { silentLogger, type Logger } from '../logger.js';
 
 export interface FleetConfig {
@@ -44,12 +46,25 @@ export const configFromEnv = (env: NodeJS.ProcessEnv, base: Pick<FleetConfig, 'h
 export const STATE_EVENTS = 150;
 /**
  * At most this many reporters are remembered for the "connected" log line, files for the once-per-window collision note, unpriced
- * models, and models with their rates.
+ * models, models with their rates, and loops for the repeated-call rule.
  */
 const MAX_REPORTERS = 1000;
 const MAX_COLLIDED = 2000;
 const MAX_UNPRICED = 200;
 const MAX_RATES = 1000;
+const MAX_RUNS = 5000;
+/** An issue's failed calls listed with it, newest first. */
+const ISSUE_CALLS = 50;
+/** About how many characters (1 MB) of an export's rows are handed on at once: a piece ends at the row that reaches it. */
+const EXPORT_PIECE = 1_000_000;
+/** Issues one list holds at most; its reply says how many there are in all. */
+const ISSUES_LISTED = 500;
+/**
+ * An issue is listed and counted once it is seen in this many sessions: an error that recurs. One seen in a
+ * single session is listed when asked for, and opens from its failed call either way.
+ */
+const ISSUE_SESSIONS = 2;
+const recurs = (c: IssueCount): boolean => c.sessions >= ISSUE_SESSIONS;
 /** The settings key that holds the owner's changes to the server settings, and the one that holds each model's rates. */
 const SETTINGS_KEY = 'server_settings';
 const PRICES_KEY = 'spend_prices';
@@ -97,6 +112,8 @@ export class Fleet {
   private readonly collided = new Map<string, number>();
   /** Models seen in reports since start that no price row matches. */
   private readonly unpriced = new Set<string>();
+  /** Each loop's run of identical tool calls so far (alerts.ts `repeated`), by session and loop. */
+  private readonly runs = new Map<string, CallRun>();
   /** Each model's rates as this start prices it, by model, kept in settings (PRICES_KEY) for the next start to compare. */
   private readonly rates: Map<string, string>;
 
@@ -224,13 +241,13 @@ export class Fleet {
     const now = this.now();
     this.db.noteMachine(machineNote(report, now));
     this.noteReporter(report, now);
-    const res = ingestReport(this.db, report, now, owner ?? null, this.pricing);
+    const res = ingestReport(this.db, report, now, owner ?? null, this.pricing, this.settings.trace);
     const { sessionId: sid, clockSkewMs } = res;
     this.activity.ingest(sid, report, clockSkewMs);
     this.respond.noteReport(sid, report, this.respondFlagsOn());
     const { session, agents } = report;
     this.notePrices([session.model, ...(session.usageByModel ?? []).map((u) => u.model), ...agents.flatMap((a) => [a.model, ...(a.usageByModel ?? []).map((u) => u.model)])]);
-    const collisions = this.noteCollisions(report.machine.id, res.newEvents);
+    const notes = [...this.noteCollisions(report.machine.id, res.newEvents), ...this.noteRepeats(sid, res.newRows)];
     const row = this.db.getSession(sid);
     const entry = this.live.get(sid);
     if (entry) entry.skewMs = clockSkewMs;
@@ -241,9 +258,11 @@ export class Fleet {
       this.logger.debug(`sitrep: session ${sid} ${res.created ? 'started' : 'is reporting again'}`);
     }
     if (res.ended && !res.wasDone) this.logger.debug(`sitrep: session ${sid} ended${row?.end_reason ? ` (${row.end_reason})` : ''}`);
+    // A claim ends with its need (viewOf), judged once this report's asks are known.
+    if (row && row.claimed_by !== null && !needsSomeone(this.viewOf(row, this.recentEdits()))) this.db.setClaim(sid, null);
     if (!this.unused(row)) {
-      // An `edit` event is the collision signal, not an activity row; the collision note it raises is one.
-      const shown = [...res.newEvents.filter((e) => e.kind !== 'edit'), ...collisions].sort((a, b) => a.t - b.t);
+      // An `edit` event is the collision signal, not an activity row; the note it raises is one, as a repeated call's is.
+      const shown = [...res.newEvents.filter((e) => e.kind !== 'edit'), ...notes].sort((a, b) => a.t - b.t);
       for (const e of shown) this.hub.broadcast('activity', activityView(e, row));
     }
     this.scheduleSession(sid);
@@ -313,6 +332,43 @@ export class Fleet {
     return notes;
   }
 
+  /**
+   * A repeated call (alerts.ts `repeated`): the tool call that makes its loop's run of identical calls three long adds one `note`
+   * event to its session ("Bash called 3 times with identical arguments"), written by the server as a collision's is. Only a call
+   * stored for the first time counts, so a reporter sending its history again raises nothing twice.
+   */
+  private noteRepeats(sessionId: string, newRows: readonly TraceRow[]): EventRow[] {
+    const notes: EventRow[] = [];
+    for (const r of newRows) {
+      if (r.kind !== 'tool') continue;
+      const loop = `${sessionId}\u0000${r.agentId ?? ''}`;
+      const { run, noted } = repeated(this.runs.get(loop), r.callHash ?? null);
+      setNewest(this.runs, loop, run, MAX_RUNS);
+      if (!noted) continue;
+      const note: EventRow = {
+        id: `${sessionId}:repeat:${r.id}`,
+        session_id: sessionId,
+        agent_id: r.agentId,
+        t: r.t1 ?? r.t0,
+        kind: 'note',
+        text: `${r.tool ?? 'A tool'} called ${String(REPEAT_RUN)} times with identical arguments`.slice(0, LIMITS.text),
+        data_json: JSON.stringify({ kind: 'repeat', rule: REPEAT_RULE, rowId: r.id, tool: r.tool }),
+      };
+      if (this.db.insertEvent(note)) notes.push(note);
+    }
+    return notes;
+  }
+
+  /**
+   * Keeps what became of an answer, message or command sent from the dashboard in its session's Activity: `text` says who did
+   * what and how it ended, in the log's own words, never what was said.
+   */
+  noteAnswer(sessionId: string, delivery: Delivery, result: string, text: string): void {
+    const row = this.db.getSession(sessionId);
+    const note: EventRow = { id: `${delivery.id}:${result}`, session_id: sessionId, agent_id: null, t: this.now(), kind: 'note', text: text.slice(0, LIMITS.text), data_json: JSON.stringify({ kind: 'answer', by: delivery.by, what: delivery.kind, result }) };
+    if (row && this.db.insertEvent(note) && !this.unused(row)) this.hub.broadcast('activity', activityView(note, row));
+  }
+
   /** A log line the first time a reporter is heard, and again when it comes back after going quiet. */
   private noteReporter(report: Report, now: number): void {
     const { name, version } = report.reporter;
@@ -371,7 +427,23 @@ export class Fleet {
       respond: this.respond.takes(id),
       asks: this.respond.summaries(id),
     };
-    return sessionView(input, now, this.derive);
+    const view = sessionView(input, now, this.derive);
+    // A claim is stored with its session, so it stands across a restart, which makes every open session live again. It shows only
+    // while the session needs someone (alerts.ts needsSomeone) and ends at the report that shows the need gone (ingest): after a
+    // restart, a session's asks are known again only from its next report.
+    if (row.claimed_by !== null && this.live.has(id) && needsSomeone(view)) view.claim = { by: row.claimed_by, at: row.claimed_at ?? 0 };
+    return view;
+  }
+
+  /** Claims a live session that needs someone for `by`. The first claim wins: 'held' with the holder, 'nothing' when it needs nobody or is not live. */
+  claim(id: string, by: string): { ok: true; claim: Claim } | { ok: false; why: 'held'; claim: Claim } | { ok: false; why: 'nothing' } {
+    const view = this.live.has(id) ? this.view(id) : undefined;
+    if (!view || !needsSomeone(view)) return { ok: false, why: 'nothing' };
+    if (view.claim) return view.claim.by === by ? { ok: true, claim: view.claim } : { ok: false, why: 'held', claim: view.claim };
+    const claim = { by, at: this.now() };
+    this.db.setClaim(id, claim);
+    this.scheduleSession(id);
+    return { ok: true, claim };
   }
 
   liveViews(): SessionView[] {
@@ -421,40 +493,100 @@ export class Fleet {
     });
   }
 
+  /** Why a session ended, as History words it. */
+  private endOf(row: SessionRow): string | null {
+    return row.dropped_at === null ? row.end_reason : END_TEXT.dropped;
+  }
+
   /**
-   * One page of the sessions that ended or were dropped in [from, to), newest first, and how many there are in all; only those of
-   * `machines` when it names any.
+   * The sessions that ended or were dropped in [from, to), newest first, that the machines and the filter let through, and where
+   * a search phrase was found (history.ts filterHistory).
    */
-  historyPage(from: number, to: number, page: number, pageSize: number, machines: readonly string[] = []): { rows: HistoryRow[]; total: number; page: number } {
+  private left(from: number, to: number, machines: readonly string[], filter: HistoryFilter, signedIn: boolean): { rows: SessionRow[]; found: Map<string, string | number> } {
     const onMachine = (row: SessionRow): boolean => machines.length === 0 || machines.includes(row.machine_id ?? '');
     const left = this.db.leftBetween(from, to).filter((row) => onMachine(row) && !this.unused(row));
     left.sort((a, b) => leftAt(b) - leftAt(a) || (a.id < b.id ? -1 : 1));
-    const lastPage = Math.max(1, Math.ceil(left.length / pageSize));
-    const shown = Math.min(page, lastPage);
-    return { rows: left.slice((shown - 1) * pageSize, shown * pageSize).map((row) => this.historyOf(row)), total: left.length, page: shown };
+    return filterHistory(this.db, left, filter, { home: this.cfg.home, endOf: (row) => this.endOf(row), signedIn });
   }
 
-  /** A session that has left, as History lists it. */
-  private historyOf(row: SessionRow): HistoryRow {
-    const agents = this.db.getAgents(row.id);
+  /** One page of those sessions, and how many there are in all; a page past the end comes back as the last. */
+  historyPage(from: number, to: number, page: number, pageSize: number, machines: readonly string[] = [], filter: HistoryFilter = {}, signedIn = false): { rows: HistoryRow[]; total: number; page: number } {
+    const { rows, found } = this.left(from, to, machines, filter, signedIn);
+    const lastPage = Math.max(1, Math.ceil(rows.length / pageSize));
+    const shown = Math.min(page, lastPage);
+    const onPage = rows.slice((shown - 1) * pageSize, shown * pageSize);
+    const feedback = this.feedbackBySession(onPage);
+    // Where the phrase was found: the stored text it was in, or the kept text's own snippet, read for this page's sessions only.
+    const matchOf = (id: string): Pick<HistoryRow, 'match'> => {
+      const hit = found.get(id);
+      if (hit === undefined) return {};
+      const kept = typeof hit === 'number' ? this.db.keptHit(hit, filter.q ?? '') : undefined;
+      return { match: { snippet: typeof hit === 'string' ? hit : (kept?.snippet ?? ''), rowId: kept?.rowId ?? null } };
+    };
+    return { rows: onPage.map((row) => ({ ...this.historyOf(row, feedback.get(row.id) ?? []), ...matchOf(row.id) })), total: rows.length, page: shown };
+  }
+
+  /**
+   * The sessions named that have ended, as History lists them, in the order named, with their feedback; one unknown, not ended,
+   * deleted or hidden from History's list is left out. What a linked comparison reads back (protocol HISTORY_IDS).
+   */
+  historySessions(ids: readonly string[]): HistoryRow[] {
+    const rows = ids.flatMap((id) => {
+      const row = this.db.getSession(id);
+      return row && (row.ended_at ?? row.dropped_at) !== null && !this.unused(row) ? [row] : [];
+    });
+    const feedback = this.feedbackBySession(rows);
+    return rows.map((row) => this.historyOf(row, feedback.get(row.id) ?? []));
+  }
+
+  /** Those sessions as groups (history.ts groupHistory), and how many sessions there are in all. */
+  historyGroups(from: number, to: number, by: GroupKey, machines: readonly string[] = [], filter: HistoryFilter = {}, signedIn = false): { groups: HistoryGroup[]; total: number } {
+    const { rows } = this.left(from, to, machines, filter, signedIn);
+    const feedback = this.feedbackBySession(rows);
+    return { groups: groupHistory(rows.map((row) => this.groupFacts(row, feedback.get(row.id) ?? [])), by), total: rows.length };
+  }
+
+  /** The feedback on each of `rows`, by session: one read for all of them. */
+  private feedbackBySession(rows: readonly SessionRow[]): Map<string, HistoryRow['feedback']> {
+    const by = new Map<string, HistoryRow['feedback']>();
+    for (const { sessionId, key, score, value } of this.db.feedbackOf(rows.map((r) => r.id))) by.set(sessionId, [...(by.get(sessionId) ?? []), { key, score, value }]);
+    return by;
+  }
+
+  /** What a group reads of a session that has left: read from its own row, with no further query. */
+  private groupFacts(row: SessionRow, feedback: HistoryRow['feedback']): GroupFacts & Pick<HistoryRow, 'startedAt' | 'commit'> {
     const endedAt = leftAt(row);
-    const agentBlowouts = agents.reduce((n, a) => n + (a.blowouts ?? 0), 0);
     const cost = costParts(this.pricing, row);
     return {
-      id: row.id,
-      nativeId: row.native_id,
-      name: nameOf(row),
       provider: providerOf(row),
       model: row.model,
-      modelFamily: family(row.model),
       project: projectOf(row, this.cfg.home),
+      machineName: fromJson<MachineInfo>(row.machine_json)?.name ?? null,
+      engineVersion: row.engine_version,
+      commit: fromJson<GitInfo>(row.git_json)?.commit ?? null,
       startedAt: row.started_at,
       endedAt,
       durationSec: Math.max(0, Math.round((endedAt - row.started_at) / 1000)),
-      endReason: row.dropped_at === null ? row.end_reason : END_TEXT.dropped,
       costUsd: cost.usd,
       costPartial: cost.partial,
-      costReason: costReasonOf(this.pricing, row.model, cost.usd),
+      record: recordOf(row),
+      feedback,
+    };
+  }
+
+  /** A session that has left, as History lists it. */
+  private historyOf(row: SessionRow, feedback: HistoryRow['feedback']): HistoryRow {
+    const agents = this.db.getAgents(row.id);
+    const agentBlowouts = agents.reduce((n, a) => n + (a.blowouts ?? 0), 0);
+    const facts = this.groupFacts(row, feedback);
+    return {
+      ...facts,
+      id: row.id,
+      nativeId: row.native_id,
+      name: nameOf(row),
+      modelFamily: family(row.model),
+      endReason: this.endOf(row),
+      costReason: costReasonOf(this.pricing, row.model, facts.costUsd),
       agents: agents.length,
       // Unknown when the session's own count is; otherwise the counts that are known.
       blowouts: row.blowouts === null ? null : row.blowouts + agentBlowouts,
@@ -463,14 +595,156 @@ export class Fleet {
     };
   }
 
+  /**
+   * History's selection as JSONL, a piece of lines at a time: each session, its rows with their kept text, its feedback; then
+   * every issue's stored state. A session's rows are read a page at a time and whole, so no read of the database stays open
+   * between pieces: a download that stops part way, or two at once, leave nothing behind. A piece of rows ends at the page's end
+   * or at the row that brings it to EXPORT_PIECE characters, whatever their kept text holds, and the rows after the last one
+   * written are read afresh for the next: rows only, each kept text being read once, as its row is written. After each piece and
+   * each session the server answers what arrived meanwhile, so an export holds up a report, the stream or a page for no longer
+   * than one piece takes to read. What changes meanwhile shows: a row stored again is written again, and a session deleted part
+   * way ends where it was, but for its feedback lines, read before its rows.
+   */
+  async *exportLines(from: number, to: number, machines: readonly string[], filter: HistoryFilter): AsyncGenerator<string> {
+    const line = (o: object): string => `${JSON.stringify(o)}\n`;
+    const { rows } = this.left(from, to, machines, filter, true);
+    for (const row of rows) {
+      const feedback = this.db.feedbackOf([row.id]);
+      yield line({ type: 'session', ...this.historyOf(row, feedback.map(({ key, score, value }) => ({ key, score, value }))) });
+      let after = 0;
+      for (let page = this.db.rows(row.id, { after }, ROWS_PAGE); page.length > 0; page = this.db.rows(row.id, { after }, ROWS_PAGE)) {
+        let piece = '';
+        for (const r of page) {
+          const text = r.kept === 1 ? Object.fromEntries(this.db.rowTexts(row.id, r.id).map((t) => [t.part, t.text])) : undefined;
+          piece += line({ type: 'row', sessionId: row.id, ...rowView(r), ...(text ? { text } : {}) });
+          after = r.seq;
+          if (piece.length >= EXPORT_PIECE) break;
+        }
+        yield piece;
+        await setImmediate();
+      }
+      if (feedback.length > 0) yield feedback.map((f) => line({ type: 'feedback', ...f })).join('');
+      await setImmediate();
+    }
+    for (const st of this.db.issueStates()) {
+      yield line({ type: 'issue', key: st.key, closedAs: st.closed_as, reason: st.reason, closedBy: st.closed_by, closedAt: st.closed_at, reopened: st.reopened === 1, claimedBy: st.claimed_by, claimedAt: st.claimed_at });
+    }
+  }
+
+  // ---- the record: rows, kept text, feedback, issues --------------------------------------------
+
+  /** A session's rows by `seq` (FleetDb.rows): the newest page, those after `after`, or the page before `before`; `more`: older ones remain. */
+  rows(id: string, at: { after?: number; before?: number }): RowsReply {
+    if (at.after !== undefined) return { rows: this.db.rows(id, at, ROWS_PAGE).map(rowView), more: false };
+    const rows = this.db.rows(id, at, ROWS_PAGE + 1);
+    return { rows: rows.slice(-ROWS_PAGE).map(rowView), more: rows.length > ROWS_PAGE };
+  }
+
+  /** Kept text: one row's whole, or that of the rows started in [from, until), each cut as TEXT_PREVIEW says. */
+  keptText(id: string, at: { row: string } | { from: number; until: number }): KeptText[] {
+    return 'row' in at ? this.db.rowTexts(id, at.row) : this.db.textsBetween(id, at.from, at.until, TEXT_PREVIEW);
+  }
+
+  /** A session's feedback, oldest first, and every tag in use. */
+  feedback(id: string): { feedback: Feedback[]; keys: string[] } {
+    return { feedback: this.db.feedbackOf([id]), keys: this.db.feedbackKeys() };
+  }
+
+  /** Whether an issue is open: unless closed, and again when closed as resolved and seen since, or reopened by hand. */
+  private issueOpen(c: IssueCount, st: IssueStateRow | undefined): boolean {
+    return !st?.closed_as || st.reopened === 1 || (st.closed_as === 'resolved' && c.lastAt > (st.closed_at ?? 0));
+  }
+
+  /** An issue as it stands (IssueView), with its error's first line where text of it is kept and the reader is signed in. */
+  private issueView(c: IssueCount, st: IssueStateRow | undefined, withText: ReadonlySet<string>, signedIn: boolean): IssueView {
+    const closed = st?.closed_as ? { as: st.closed_as, reason: st.reason, by: st.closed_by ?? '', at: st.closed_at ?? 0 } : null;
+    const recurred = closed?.as === 'resolved' && c.lastAt > closed.at;
+    const open = this.issueOpen(c, st);
+    const errorKept = withText.has(c.key);
+    const output = signedIn && errorKept ? this.db.issueText(c.key, 'output') : null;
+    return {
+      ...c,
+      // The error's first line with something in it.
+      error: output?.split('\n').find((l) => l.trim() !== '')?.trim().slice(0, LIMITS.text) ?? null,
+      errorKept,
+      status: open || closed === null ? 'open' : closed.as,
+      recurred: open && recurred,
+      closed,
+      claim: open && st?.claimed_by ? { by: st.claimed_by, at: st.claimed_at ?? 0 } : null,
+    };
+  }
+
+  /** Every issue's counts, the open ones first, each group most sessions first: from the index and the stored states, with no text. */
+  private issueList(): { open: IssueCount[]; closed: IssueCount[]; states: Map<string, IssueStateRow> } {
+    const states = new Map(this.db.issueStates().map((st) => [st.key, st]));
+    const [open, closed]: IssueCount[][] = [[], []];
+    for (const c of this.db.issueCounts()) (this.issueOpen(c, states.get(c.key)) ? open : closed).push(c);
+    return { open, closed, states };
+  }
+
+  /**
+   * The issues that recur (`recurs`), and with `once` those seen in one session too: open ones, closed ones, or all (the open
+   * first), at most ISSUES_LISTED of them; `total` is how many there are, `once` how many seen in one session.
+   */
+  issues(state: 'open' | 'closed' | 'all', signedIn: boolean, once: boolean): { issues: IssueView[]; total: number; once: number } {
+    const { open, closed, states } = this.issueList();
+    const every = state === 'open' ? open : state === 'closed' ? closed : [...open, ...closed];
+    const recurring = every.filter(recurs);
+    const of = once ? every : recurring;
+    const withText = new Set(this.db.issueKeysWithText());
+    return { issues: of.slice(0, ISSUES_LISTED).map((c) => this.issueView(c, states.get(c.key), withText, signedIn)), total: of.length, once: every.length - recurring.length };
+  }
+
+  /** How many issues that recur are open. */
+  openIssues(): number {
+    return this.issueList().open.filter(recurs).length;
+  }
+
+  /** One issue with its newest failed calls and, signed in, the newest kept input and output among them; undefined when no failed call of it is stored. */
+  issue(key: string, signedIn: boolean): IssueDetail | undefined {
+    const [count] = this.db.issueCounts(key);
+    if (!count) return undefined;
+    const [input, output] = [this.db.issueText(key, 'input'), this.db.issueText(key, 'output')];
+    const sessions = new Map<string, SessionRow | undefined>();
+    const occurrences = this.db.issueCalls(key, ISSUE_CALLS).flatMap(({ sessionId, rowId, at }) => {
+      if (!sessions.has(sessionId)) sessions.set(sessionId, this.db.getSession(sessionId));
+      const row = sessions.get(sessionId);
+      if (!row) return [];
+      const [provider, commit] = [providerOf(row), fromJson<GitInfo>(row.git_json)?.commit ?? null];
+      return [{ sessionId, sessionName: nameOf(row), rowId, at, project: projectOf(row, this.cfg.home), model: row.model, engineVersion: row.engine_version, commit, resumeCommand: resumeCommand(provider, row.cwd, row.resume_id, row.native_id) }];
+    });
+    return {
+      issue: this.issueView(count, this.db.issueState(key), new Set(output === null ? [] : [key]), signedIn),
+      occurrences,
+      input: signedIn ? input : null,
+      output: signedIn ? output : null,
+    };
+  }
+
+  /**
+   * What a signed-in person does to an open or closed issue: claim it (the first claim wins), close it as resolved or as
+   * incorrectly flagged with a reason (which ends its claim), or reopen it. The issue after, or why not.
+   */
+  actOnIssue(key: string, by: string, act: { do: 'claim' } | { do: 'close'; as: 'resolved' | 'flagged'; reason: string | null } | { do: 'reopen' }): { ok: true; issue: IssueView } | { ok: false; why: 'unknown' | 'held' | 'closed'; issue?: IssueView } {
+    const now = this.issue(key, true)?.issue;
+    if (!now) return { ok: false, why: 'unknown' };
+    if (act.do === 'claim') {
+      if (now.status !== 'open') return { ok: false, why: 'closed', issue: now };
+      if (now.claim && now.claim.by !== by) return { ok: false, why: 'held', issue: now };
+      this.db.setIssueState(key, { claimed_by: by, claimed_at: this.now() });
+    } else if (act.do === 'close') this.db.setIssueState(key, { closed_as: act.as, reason: act.reason, closed_by: by, closed_at: this.now(), reopened: 0, claimed_by: null, claimed_at: null });
+    else this.db.setIssueState(key, { reopened: 1 });
+    return { ok: true, issue: this.issue(key, true)!.issue };
+  }
+
   state(): StateBody {
     const sessions = this.liveViews();
-    const { respond, activityFeed, lifecycle } = this.settings;
+    const { respond, activityFeed, trace, lifecycle } = this.settings;
     return {
       serverTime: this.now(),
       server: { version: serverVersion(), build: serverBuild(), reporterSupport: { ...REPORTER_SUPPORT } },
       config: { ...lifecycle },
-      settings: { respond, activityFeed },
+      settings: { respond, activityFeed, trace },
       sessions,
       kpis: this.kpis(sessions),
       machines: this.machines(sessions),
@@ -535,11 +809,11 @@ export class Fleet {
   }
 
   /** Writes a consistent copy of the database into a new file beside it and returns its path; the caller deletes it. */
-  backup(): string {
+  async backup(): Promise<string> {
     const dir = this.cfg.dbPath === ':memory:' ? '.' : path.dirname(this.cfg.dbPath);
     const file = path.join(dir, `backup-${String(this.now())}-${randomBytes(4).toString('hex')}.sqlite`);
     try {
-      this.db.backupTo(file);
+      await this.db.backupTo(file);
     } catch (err) {
       rmSync(file, { force: true });
       throw err;
@@ -547,10 +821,11 @@ export class Fleet {
     return file;
   }
 
-  /** What the server holds in memory for a session leaving the live set. */
+  /** What the server holds for a session leaving the live set: in memory, and its claim. */
   private forget(id: string): void {
     this.activity.dropSession(id);
     this.respond.dropSession(id);
+    this.db.setClaim(id, null);
     clearTimeout(this.pending.get(id));
     this.pending.delete(id);
   }

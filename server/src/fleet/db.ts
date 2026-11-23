@@ -3,15 +3,16 @@
 //
 // Tables: sessions, carrying their provider, machine, liveness and failure facts, and a blowout count that is null when the
 // reporter cannot know it; agents and their full texts; events; blowouts; one sample per session per second; the machines that
-// reported; the settings; the spend record, which nothing ever deletes; the owner's sign-ins, by a hash of their cookie; and
-// Claude Code's API requests, each counted once, summed per session.
+// reported; the settings; the spend record, which nothing ever deletes; the owner's sign-ins, by a hash of their cookie;
+// Claude Code's API requests, each counted once, summed per session; and the record: a row per turn, model request and
+// tool call, its kept text with a full-text index, feedback, and what a person did to an issue.
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { DatabaseSync, SQLInputValue, StatementSync } from 'node:sqlite';
-import type { AgentReport, AgentStatus, ModelUsage, SpendRecordRow, UsageTokens } from './protocol.js';
+import type { AgentReport, AgentStatus, Feedback, IssueView, KeptText, ModelUsage, RowView, SpendRecordRow, TraceRow, UsageTokens } from './protocol.js';
 
 // Not a static import: Vite (vitest) drops the `node:` prefix from one and then finds no module called `sqlite`.
-const { DatabaseSync: Database } = process.getBuiltinModule('node:sqlite');
+const { DatabaseSync: Database, backup } = process.getBuiltinModule('node:sqlite');
 
 /** Migration 1, the first schema, one line per kind of column. Column order matters to nothing; rows are read by name. */
 const SCHEMA_V1 = `
@@ -145,14 +146,51 @@ const MIGRATIONS: readonly string[] = [
   // 12: whether a session has been on the wall (Fleet.unused), so one that recorded nothing keeps its History and Activity rows
   // after it leaves and across restarts. A row from before is 0, judged as before by what it recorded.
   'ALTER TABLE sessions ADD COLUMN shown INTEGER NOT NULL DEFAULT 0;',
+  // 13: the record. One row per turn, model request and tool call, by session and the reporter's id for it; a row sent
+  // again replaces the stored one and takes a new `seq`, the order rows were stored in. A row's kept text lives apart, with a
+  // full-text index over it: FTS5 with the table as its content, kept in step by two triggers, as SQLite documents the pattern
+  // (`doc` is an INTEGER PRIMARY KEY, so a VACUUM keeps the index true). Each session keeps its record's counts, so
+  // History never scans rows. Then feedback, what a person did to an issue, and the name a sign-in was made under.
+  `CREATE TABLE trace_rows (
+     seq INTEGER PRIMARY KEY, session_id TEXT NOT NULL, id TEXT NOT NULL, kind TEXT NOT NULL, agent_id TEXT, t0 INTEGER NOT NULL, t1 INTEGER,
+     turn_end TEXT, model TEXT, effort TEXT, tok_in INTEGER, tok_out INTEGER, tok_cr INTEGER, tok_cw INTEGER, stop TEXT,
+     tool TEXT, outcome TEXT, exit_code INTEGER, call_hash TEXT, error_hash TEXT, gap INTEGER, kept INTEGER NOT NULL DEFAULT 0,
+     UNIQUE (session_id, id)
+   );
+   CREATE INDEX trace_rows_session ON trace_rows (session_id, seq);
+   CREATE INDEX trace_rows_error ON trace_rows (error_hash, session_id, t0, tool) WHERE error_hash IS NOT NULL;
+   CREATE TABLE row_texts (doc INTEGER PRIMARY KEY, session_id TEXT NOT NULL, row_id TEXT NOT NULL, part TEXT NOT NULL, text TEXT NOT NULL, UNIQUE (session_id, row_id, part));
+   CREATE VIRTUAL TABLE row_texts_fts USING fts5(text, content='row_texts', content_rowid='doc');
+   CREATE TRIGGER row_texts_ai AFTER INSERT ON row_texts BEGIN INSERT INTO row_texts_fts(rowid, text) VALUES (new.doc, new.text); END;
+   CREATE TRIGGER row_texts_ad AFTER DELETE ON row_texts BEGIN INSERT INTO row_texts_fts(row_texts_fts, rowid, text) VALUES ('delete', old.doc, old.text); END;
+   CREATE TRIGGER row_texts_au AFTER UPDATE ON row_texts BEGIN INSERT INTO row_texts_fts(row_texts_fts, rowid, text) VALUES ('delete', old.doc, old.text); INSERT INTO row_texts_fts(rowid, text) VALUES (new.doc, new.text); END;
+   CREATE TABLE feedback (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, row_id TEXT, key TEXT NOT NULL, score REAL, value TEXT, comment TEXT, author TEXT NOT NULL, at INTEGER NOT NULL);
+   CREATE INDEX feedback_session ON feedback (session_id);
+   CREATE TABLE issue_states (key TEXT PRIMARY KEY, closed_as TEXT, reason TEXT, closed_by TEXT, closed_at INTEGER, reopened INTEGER NOT NULL DEFAULT 0, claimed_by TEXT, claimed_at INTEGER) WITHOUT ROWID;
+   ALTER TABLE sessions ADD COLUMN rec_turns INTEGER;
+   ALTER TABLE sessions ADD COLUMN rec_requests INTEGER;
+   ALTER TABLE sessions ADD COLUMN rec_tools INTEGER;
+   ALTER TABLE sessions ADD COLUMN rec_known INTEGER;
+   ALTER TABLE sessions ADD COLUMN rec_failed INTEGER;
+   ALTER TABLE sessions ADD COLUMN rec_seq INTEGER;
+   ALTER TABLE sign_ins ADD COLUMN name TEXT;`,
+  // 14: the issue index also holds whether a failed call's text was kept, so which issues have an error to show is read from
+  // the index alone.
+  `DROP INDEX trace_rows_error;
+   CREATE INDEX trace_rows_error ON trace_rows (error_hash, session_id, t0, tool, kept) WHERE error_hash IS NOT NULL;`,
+  // 15: who claimed a session that needs someone, and when, so a claim stands across a restart for as long as what it was
+  // claimed for lasts (Fleet.viewOf shows it while it does; Fleet.ingest drops it at the report that shows it ended, and
+  // Fleet.forget when the session leaves the live set). Reports never write them.
+  `ALTER TABLE sessions ADD COLUMN claimed_by TEXT;
+   ALTER TABLE sessions ADD COLUMN claimed_at INTEGER;`,
 ];
 
 export { sessionKey } from './protocol.js';
 
 /**
  * A `sessions` row, a column to a line in SCHEMA_V1's order; a column a later migration added stands by the one it goes with
- * (`native_id` by `id`, `display_name` and `spend_counted` by `name`, `shown` by `status`, `host_surface` by `engine_version`). A
- * boolean column holds 0 or 1, or null for unknown where it may.
+ * (`native_id` by `id`, `display_name` and `spend_counted` by `name`, `shown` and the claim by `status`, `host_surface` by
+ * `engine_version`). A boolean column holds 0 or 1, or null for unknown where it may.
  */
 export interface SessionRow {
   /** sessionKey: the native id at its machine. */
@@ -171,6 +209,16 @@ export interface SessionRow {
   status: 'running' | 'waiting' | 'done';
   /** 1 once the session has been on the wall (Fleet.unused). Reports never write it. */
   shown: number;
+  /** Who claimed it while it needs someone, and when; null when nobody has (Fleet.viewOf, Fleet.ingest, Fleet.forget). Reports never write them. */
+  claimed_by: string | null;
+  claimed_at: number | null;
+  /** Its record's counts and newest row (RecordCounts), all null while no row of it is stored. Reports never write them; storeRows does. */
+  rec_turns: number | null;
+  rec_requests: number | null;
+  rec_tools: number | null;
+  rec_known: number | null;
+  rec_failed: number | null;
+  rec_seq: number | null;
   wait_reason: string | null;
   wait_note: string | null;
   end_reason: string | null;
@@ -218,8 +266,8 @@ export interface SessionRow {
   cleared_from: string | null;
 }
 
-/** A session row as a report writes it: every column but the owner's display name, the spend counted and whether it was shown. */
-export type ReportedSession = Omit<SessionRow, 'display_name' | 'spend_counted' | 'shown'>;
+/** A session row as a report writes it: every column but the owner's display name, the spend counted, whether it was shown, its claim, and its record's counts. */
+export type ReportedSession = Omit<SessionRow, 'display_name' | 'spend_counted' | 'shown' | `claimed_${string}` | `rec_${string}`>;
 
 /** An `agents` row, a column to a line in the table's order. */
 export interface AgentRow {
@@ -296,6 +344,71 @@ export interface SampleRow {
   /** The USD this second booked to the spend record (recordSpend), its reports' together; 0 when it booked nothing. */
   spend_usd: number;
 }
+
+/** A `trace_rows` row: a TraceRow by column, with the order it was stored in and whether any text is kept for it. */
+export interface StoredRow {
+  seq: number;
+  session_id: string;
+  id: string;
+  kind: TraceRow['kind'];
+  agent_id: string | null;
+  t0: number;
+  t1: number | null;
+  turn_end: string | null;
+  model: string | null;
+  effort: string | null;
+  tok_in: number | null;
+  tok_out: number | null;
+  tok_cr: number | null;
+  tok_cw: number | null;
+  stop: string | null;
+  tool: string | null;
+  outcome: string | null;
+  exit_code: number | null;
+  call_hash: string | null;
+  error_hash: string | null;
+  gap: number | null;
+  kept: number;
+}
+
+/** A stored row as the browser reads it: only the fields of its kind. */
+export function rowView(r: StoredRow): RowView {
+  const base = { id: r.id, kind: r.kind, agentId: r.agent_id, t0: r.t0, t1: r.t1, seq: r.seq, kept: r.kept === 1 };
+  if (r.kind === 'turn') return { ...base, end: r.turn_end as RowView['end'] };
+  if (r.kind === 'gap') return { ...base, count: r.gap ?? 0 };
+  if (r.kind === 'tool') return { ...base, tool: r.tool ?? '', outcome: r.outcome as RowView['outcome'], exit: r.exit_code, callHash: r.call_hash, errorHash: r.error_hash };
+  const tokens = r.tok_in === null ? null : { input: r.tok_in, output: r.tok_out ?? 0, cacheRead: r.tok_cr ?? 0, cacheWrite: r.tok_cw ?? 0 };
+  return { ...base, model: r.model, effort: r.effort, tokens, stop: r.stop };
+}
+
+/** The failed calls that share one `error_hash`, counted. */
+export type IssueCount = Pick<IssueView, 'key' | 'tool' | 'sessions' | 'calls' | 'firstAt' | 'lastAt'>;
+
+/** An `issue_states` row: an issue's last close and its claim. */
+export interface IssueStateRow {
+  key: string;
+  closed_as: 'resolved' | 'flagged' | null;
+  reason: string | null;
+  closed_by: string | null;
+  closed_at: number | null;
+  /** 1 once a person reopened it after that close. */
+  reopened: number;
+  claimed_by: string | null;
+  claimed_at: number | null;
+}
+
+/** A list of session ids as one parameter: `session_id IN (SELECT value FROM json_each(?))`. */
+const IN_SESSIONS = 'IN (SELECT value FROM json_each(?))';
+/** A phrase as a LIKE pattern that matches it anywhere, its own `%`, `_` and `\\` taken literally (ESCAPE '\\'). */
+const likeAnywhere = (phrase: string): string => `%${phrase.replace(/[\\%_]/g, '\\$&')}%`;
+/**
+ * A stored failure (`agents.failure_json`, protocol Failure) as the words a person reads of it: its class, tool, call, output tail
+ * and evidence, every text it holds, one to a line. A search phrase is one line, so it never matches across two of them; a
+ * snippet folds the line breaks into spaces (history.ts `around`).
+ */
+const FAILURE_TEXT = "(SELECT group_concat(atom, char(10)) FROM json_tree(failure_json) WHERE type = 'text')";
+/** A phrase as an FTS5 query: its words in order, the last one a prefix. */
+const ftsPhrase = (phrase: string): string => `"${phrase.replaceAll('"', '""')}" *`;
 
 /** An agent's full prompt and answer, as kept in `agent_texts`. */
 export type AgentTexts = { prompt: string | null; answer: string | null };
@@ -492,6 +605,11 @@ export class FleetDb {
     this.run('UPDATE sessions SET shown = 1 WHERE id = ?', id);
   }
 
+  /** Stores who claimed a session and when, or clears its claim (null). */
+  setClaim(id: string, claim: { by: string; at: number } | null): void {
+    this.run('UPDATE sessions SET claimed_by = ?, claimed_at = ? WHERE id = ?', claim?.by ?? null, claim?.at ?? null, id);
+  }
+
   /** Sets or clears (null) the owner's name for a session; false when there is no such session. */
   setDisplayName(id: string, name: string | null): boolean {
     return this.run('UPDATE sessions SET display_name = ? WHERE id = ?', name, id) > 0;
@@ -499,7 +617,7 @@ export class FleetDb {
 
   /** Deletes a session with every row of its own; whether it existed. */
   private removeSession(id: string): boolean {
-    for (const table of ['events', 'blowouts', 'samples', 'agents', 'agent_texts', 'api_usage']) this.run(`DELETE FROM ${table} WHERE session_id = ?`, id);
+    for (const table of ['events', 'blowouts', 'samples', 'agents', 'agent_texts', 'api_usage', 'trace_rows', 'row_texts', 'feedback']) this.run(`DELETE FROM ${table} WHERE session_id = ?`, id);
     return this.run('DELETE FROM sessions WHERE id = ?', id) > 0;
   }
 
@@ -686,15 +804,15 @@ export class FleetDb {
 
   // Sign-ins, each by the SHA-256 of its cookie's id.
 
-  /** When a sign-in was last used; null when there is no such sign-in. */
-  signInUsedAt(idHash: string): number | null {
-    return this.one<{ last_used_at: number }>('SELECT last_used_at FROM sign_ins WHERE id_hash = ?', idHash)?.last_used_at ?? null;
+  /** When a sign-in was last used and the name it was made under; undefined when there is no such sign-in. */
+  signIn(idHash: string): { last_used_at: number; name: string | null } | undefined {
+    return this.one('SELECT last_used_at, name FROM sign_ins WHERE id_hash = ?', idHash);
   }
 
-  /** Starts a sign-in, or notes one used at `at`; then keeps only the `keep` most recently used. */
-  useSignIn(idHash: string, at: number, keep: number): void {
+  /** Starts a sign-in under `name`, or notes one used at `at` (no name: the stored one stays); then keeps only the `keep` most recently used. */
+  useSignIn(idHash: string, at: number, keep: number, name?: string): void {
     this.tx(() => {
-      this.write('sign_ins', { id_hash: idHash, last_used_at: at }, ['id_hash']);
+      this.write('sign_ins', { id_hash: idHash, last_used_at: at, ...(name === undefined ? {} : { name }) }, ['id_hash']);
       this.run('DELETE FROM sign_ins WHERE id_hash NOT IN (SELECT id_hash FROM sign_ins ORDER BY last_used_at DESC LIMIT ?)', keep);
     });
   }
@@ -704,9 +822,187 @@ export class FleetDb {
     return idHash === undefined ? this.run('DELETE FROM sign_ins') : this.run('DELETE FROM sign_ins WHERE id_hash = ?', idHash);
   }
 
-  /** Writes a consistent copy of the whole database to a new file (`VACUUM INTO`); the file must not exist yet. */
-  backupTo(file: string): void {
-    this.db.prepare('VACUUM INTO ?').run(file);
+
+  // The record: rows by session and the reporter's id, their kept text, and each session's counts.
+
+  /**
+   * Stores a row. What it carries replaces what is stored under its id; what it does not carry (a null field, a text part left
+   * out) stays. A row therefore only gains facts: a turn that ended, a call that learned its outcome, a prompt a later message
+   * added to; and a reporter that reads its history again and sends a turn's start, or a call before its outcome, takes nothing
+   * away. A row that changes nothing writes nothing, so a report sent twice is stored once; one that changes anything takes a new
+   * `seq`. Returns the row's `seq`, whether it was written, whether it is new, and whether this store is the first to give its
+   * outcome, and the first to mark it failed.
+   */
+  putRow(sessionId: string, r: TraceRow): { seq: number; written: boolean; isNew: boolean; knownNow: boolean; failedNow: boolean } {
+    const had = this.one<StoredRow>('SELECT * FROM trace_rows WHERE session_id = ? AND id = ?', sessionId, r.id);
+    const parts = Object.entries(r.text ?? {});
+    const k = <K extends keyof StoredRow>(col: K, now: StoredRow[K] | null | undefined): StoredRow[K] | null => now ?? had?.[col] ?? null;
+    const row: Omit<StoredRow, 'seq'> = {
+      session_id: sessionId, id: r.id, kind: r.kind, agent_id: k('agent_id', r.agentId), t0: r.t0, t1: k('t1', r.t1),
+      turn_end: k('turn_end', r.end), model: k('model', r.model), effort: k('effort', r.effort),
+      tok_in: k('tok_in', r.tokens?.input), tok_out: k('tok_out', r.tokens?.output), tok_cr: k('tok_cr', r.tokens?.cacheRead), tok_cw: k('tok_cw', r.tokens?.cacheWrite), stop: k('stop', r.stop),
+      tool: k('tool', r.tool), outcome: k('outcome', r.outcome), exit_code: k('exit_code', r.exit), call_hash: k('call_hash', r.callHash), error_hash: k('error_hash', r.errorHash),
+      gap: k('gap', r.count), kept: had?.kept === 1 || parts.length > 0 ? 1 : 0,
+    };
+    const cols = Object.keys(row) as (keyof typeof row)[];
+    const upsert = 'INSERT INTO row_texts (session_id, row_id, part, text) VALUES (?, ?, ?, ?) ON CONFLICT(session_id, row_id, part) DO UPDATE SET text = excluded.text WHERE text <> excluded.text';
+    const texts = parts.reduce((n, [part, text]) => n + this.run(upsert, sessionId, r.id, part, text), 0);
+    const written = had === undefined || texts > 0 || cols.some((c) => had[c] !== row[c]);
+    const seq = written ? Number(this.prepared(`INSERT OR REPLACE INTO trace_rows (${cols.join(', ')}) VALUES (${cols.map((c) => `:${c}`).join(', ')})`).run(row as Params).lastInsertRowid) : had.seq;
+    return { seq, written, isNew: had === undefined, knownNow: row.outcome !== null && (had?.outcome ?? null) === null, failedNow: row.outcome === 'failed' && had?.outcome !== 'failed' };
+  }
+
+  /** Adds to a session's record counts and sets its newest `seq`. */
+  addRecord(sessionId: string, add: { turns: number; requests: number; tools: number; known: number; failed: number }, seq: number): void {
+    const plus = (c: string) => `${c} = COALESCE(${c}, 0) + ?`;
+    this.run(`UPDATE sessions SET ${plus('rec_turns')}, ${plus('rec_requests')}, ${plus('rec_tools')}, ${plus('rec_known')}, ${plus('rec_failed')}, rec_seq = ? WHERE id = ?`, add.turns, add.requests, add.tools, add.known, add.failed, seq, sessionId);
+  }
+
+  /** A session's rows by `seq`, oldest first: those after `after`, else the `limit` before `before` (the newest when it is absent). */
+  rows(sessionId: string, { after, before }: { after?: number; before?: number }, limit: number): StoredRow[] {
+    if (after !== undefined) return this.all('SELECT * FROM trace_rows WHERE session_id = ? AND seq > ? ORDER BY seq LIMIT ?', sessionId, after, limit);
+    return this.all<StoredRow>('SELECT * FROM trace_rows WHERE session_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?', sessionId, before ?? Number.MAX_SAFE_INTEGER, limit).reverse();
+  }
+
+  /** A row's kept texts, whole. */
+  rowTexts(sessionId: string, rowId: string): KeptText[] {
+    return this.all('SELECT row_id AS rowId, part, text, length(text) AS chars FROM row_texts WHERE session_id = ? AND row_id = ?', sessionId, rowId);
+  }
+
+  /** The kept texts of a session's rows that started in [from, until), in the rows' order, a prompt cut to `preview.prompt` characters and any other part to `preview.other`. */
+  textsBetween(sessionId: string, from: number, until: number, preview: { prompt: number; other: number }): KeptText[] {
+    return this.all(
+      `SELECT x.row_id AS rowId, x.part AS part, substr(x.text, 1, CASE x.part WHEN 'prompt' THEN ? ELSE ? END) AS text, length(x.text) AS chars
+       FROM trace_rows r JOIN row_texts x ON x.session_id = r.session_id AND x.row_id = r.id
+       WHERE r.session_id = ? AND r.t0 >= ? AND r.t0 < ? ORDER BY r.t0, r.seq`,
+      preview.prompt, preview.other, sessionId, from, until,
+    );
+  }
+
+  // Search, among the sessions named: where a phrase is found, one place a session.
+
+  /**
+   * The sessions, among those named, whose kept text holds the phrase, each with its first text that does (`doc`). The index is
+   * read only between the named sessions' first and last `doc`: a text's `doc` grows as texts arrive, so a range of days holds a
+   * narrow span of them, and FTS5 seeks each term's list to the span and stops at its end (sqlite.org/fts5.html §9.2,
+   * `rowid BETWEEN ? AND ?`). With no kept text among them, the index is not read at all. A bound goes in as a BigInt: FTS5 takes
+   * a rowid bound only as an integer, and node:sqlite binds a JS number as REAL, which FTS5 reads as no bound.
+   */
+  sessionsWithKept(sessionIds: readonly string[], phrase: string): { id: string; doc: number }[] {
+    const ids = JSON.stringify(sessionIds);
+    const { lo, hi } = this.one<{ lo: number | null; hi: number | null }>(`SELECT MIN(doc) AS lo, MAX(doc) AS hi FROM row_texts WHERE session_id ${IN_SESSIONS}`, ids)!;
+    if (lo === null || hi === null) return [];
+    const sql = `SELECT x.session_id AS id, MIN(x.doc) AS doc FROM row_texts_fts JOIN row_texts x ON x.doc = row_texts_fts.rowid
+       WHERE row_texts_fts MATCH ? AND row_texts_fts.rowid BETWEEN ? AND ? AND x.session_id ${IN_SESSIONS} GROUP BY x.session_id`;
+    return this.all(sql, ftsPhrase(phrase), BigInt(lo), BigInt(hi), ids);
+  }
+
+  /**
+   * Where that text holds the phrase: its row and the words around the match. (FTS5's snippet cannot be grouped, so it is read by
+   * the text's own id, for the page shown; a BigInt, as in sessionsWithKept, so FTS5 seeks to it.)
+   */
+  keptHit(doc: number, phrase: string): { rowId: string; snippet: string } | undefined {
+    const sql = `SELECT x.row_id AS rowId, snippet(row_texts_fts, 0, '', '', '…', 12) AS snippet FROM row_texts_fts JOIN row_texts x ON x.doc = row_texts_fts.rowid WHERE row_texts_fts MATCH ? AND row_texts_fts.rowid = ?`;
+    return this.one(sql, ftsPhrase(phrase), BigInt(doc));
+  }
+
+  /**
+   * In what SITREP already stores: an Activity line, or an agent's prompt excerpt, answer excerpt or failure. The text it was
+   * found in. A failure is searched and shown as the words a person reads of it (FAILURE_TEXT), never as its stored JSON.
+   */
+  searchStored(sessionIds: readonly string[], phrase: string): { sessionId: string; text: string }[] {
+    const [ids, like] = [JSON.stringify(sessionIds), likeAnywhere(phrase)];
+    const events = this.all<{ sessionId: string; text: string }>(`SELECT session_id AS sessionId, text FROM events WHERE session_id ${IN_SESSIONS} AND kind != 'edit' AND text LIKE ? ESCAPE '\\' GROUP BY session_id`, ids, like);
+    const agents = this.all<{ sessionId: string; text: string }>(
+      `SELECT session_id AS sessionId, CASE WHEN prompt_excerpt LIKE :q ESCAPE '\\' THEN prompt_excerpt WHEN answer_excerpt LIKE :q ESCAPE '\\' THEN answer_excerpt ELSE ${FAILURE_TEXT} END AS text
+       FROM agents WHERE session_id IN (SELECT value FROM json_each(:ids)) AND (prompt_excerpt LIKE :q ESCAPE '\\' OR answer_excerpt LIKE :q ESCAPE '\\' OR ${FAILURE_TEXT} LIKE :q ESCAPE '\\') GROUP BY session_id`,
+      { ids, q: like },
+    );
+    return [...events, ...agents];
+  }
+
+  /**
+   * The sessions, among those named, one of whose agents called a tool whose name starts with `tool` (the main loop's counts are on
+   * its row), or, among `byRecord` (sessions whose report counts no calls), whose record holds a call of one: each such session's
+   * rows read by the record's index up to the first such call.
+   */
+  sessionsWithTool(sessionIds: readonly string[], byRecord: readonly string[], tool: string): string[] {
+    const prefix = likeAnywhere(tool).slice(1);
+    const sql = `SELECT s.value AS id FROM json_each(?) s WHERE EXISTS (SELECT 1 FROM agents WHERE session_id = s.value AND tool_counts_json LIKE ? ESCAPE '\\')
+       OR (s.value IN (SELECT value FROM json_each(?)) AND EXISTS (SELECT 1 FROM trace_rows WHERE session_id = s.value AND kind = 'tool' AND tool LIKE ? ESCAPE '\\'))`;
+    return this.all<{ id: string }>(sql, JSON.stringify(sessionIds), `%"${prefix}`, JSON.stringify(byRecord), prefix).map((r) => r.id);
+  }
+
+  // Feedback: what a person said of a session or one of its rows.
+
+  addFeedback(sessionId: string, f: Omit<Feedback, 'id'>): Feedback {
+    const row = { session_id: sessionId, row_id: f.rowId, key: f.key, score: f.score, value: f.value, comment: f.comment, author: f.by, at: f.at };
+    const cols = Object.keys(row);
+    const id = Number(this.prepared(`INSERT INTO feedback (${cols.join(', ')}) VALUES (${cols.map((c) => `:${c}`).join(', ')})`).run(row as Params).lastInsertRowid);
+    return { id, ...f };
+  }
+
+  deleteFeedback(id: number): boolean {
+    return this.run('DELETE FROM feedback WHERE id = ?', id) > 0;
+  }
+
+  /** The feedback on the sessions named, oldest first, each with its session. */
+  feedbackOf(sessionIds: readonly string[]): (Feedback & { sessionId: string })[] {
+    return this.all(`SELECT id, session_id AS sessionId, row_id AS rowId, key, score, value, comment, author AS by, at FROM feedback WHERE session_id ${IN_SESSIONS} ORDER BY at, id`, JSON.stringify(sessionIds));
+  }
+
+  /** Every tag in use, sorted. */
+  feedbackKeys(): string[] {
+    return this.all<{ key: string }>('SELECT DISTINCT key FROM feedback ORDER BY key LIMIT 200').map((r) => r.key);
+  }
+
+  // Issues: the failed calls that share an `error_hash`, read from the index alone, and what a person did to each.
+
+  /** Every issue with a failed call stored (one `key` alone when given), most sessions first: read from the index alone. */
+  issueCounts(key?: string): IssueCount[] {
+    const one = key === undefined ? '' : 'AND error_hash = ?';
+    const sql = `SELECT error_hash AS key, MIN(tool) AS tool, COUNT(DISTINCT session_id) AS sessions, COUNT(*) AS calls, MIN(t0) AS firstAt, MAX(t0) AS lastAt
+       FROM trace_rows WHERE error_hash IS NOT NULL ${one} GROUP BY error_hash ORDER BY sessions DESC, lastAt DESC`;
+    return key === undefined ? this.all(sql) : this.all(sql, key);
+  }
+
+  /** The issues that have a failed call with kept text, so their error can be named. */
+  issueKeysWithText(): string[] {
+    return this.all<{ key: string }>('SELECT DISTINCT error_hash AS key FROM trace_rows WHERE error_hash IS NOT NULL AND kept = 1').map((r) => r.key);
+  }
+
+  issueStates(): IssueStateRow[] {
+    return this.all('SELECT * FROM issue_states');
+  }
+
+  issueState(key: string): IssueStateRow | undefined {
+    return this.one('SELECT * FROM issue_states WHERE key = ?', key);
+  }
+
+  /** Writes the columns given of an issue's state, leaving the others as they are. */
+  setIssueState(key: string, set: Partial<Omit<IssueStateRow, 'key'>>): void {
+    this.write('issue_states', { key, ...set }, ['key']);
+  }
+
+  /** An issue's newest failed calls: the session, the row and when. */
+  issueCalls(key: string, limit: number): { sessionId: string; rowId: string; at: number }[] {
+    return this.all('SELECT session_id AS sessionId, id AS rowId, t0 AS at FROM trace_rows WHERE error_hash = ? ORDER BY t0 DESC LIMIT ?', key, limit);
+  }
+
+  /** The newest kept text of one part among an issue's failed calls; null when none was kept. */
+  issueText(key: string, part: 'input' | 'output'): string | null {
+    const sql = `SELECT x.text AS text FROM trace_rows r JOIN row_texts x ON x.session_id = r.session_id AND x.row_id = r.id AND x.part = ?
+       WHERE r.error_hash = ? AND r.kept = 1 ORDER BY r.t0 DESC LIMIT 1`;
+    return this.one<{ text: string }>(sql, part, key)?.text ?? null;
+  }
+
+  /**
+   * Writes a consistent copy of the whole database to `file` with SQLite's online backup API (node:sqlite `backup`): it copies a
+   * step of pages at a time off the event loop, so the server keeps answering, and this connection's writes meanwhile are in the
+   * copy. The copy is page for page, its free pages included.
+   */
+  backupTo(file: string): Promise<number> {
+    return backup(this.db, file);
   }
 
   // Claude Code's API requests: each counted once, its tokens added to its session's sums.

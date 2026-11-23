@@ -262,7 +262,7 @@ export class Responder {
 
   private responding(sessionId: string, kind: RespondKind): boolean {
     const s = this.fleet.sessions.get(sessionId);
-    return !!s && !!this.transportOf(sessionId)?.respond && !this.fleet.thread(sessionId).ended && this.respondInfo(s).accepts.includes(kind);
+    return !!s && !!this.transportOf(sessionId)?.respond && !this.fleet.hasEnded(this.fleet.thread(sessionId)) && this.respondInfo(s).accepts.includes(kind);
   }
 
   /** The asks open now for a session, sent with its report while the server takes answers. */

@@ -1,5 +1,6 @@
 // The session's plan from Claude Code's task tools. Pure: each reducer hands back a new PlanState, or the one it was given
 // when the input is not one it understands, and never throws.
+import { clip, LIMITS } from './failures.ts';
 import type { Plan, PlanStep } from './protocol.ts';
 
 /** The task tools' own status words, and the step state each is in a report. */
@@ -187,13 +188,18 @@ export function withOwners(p: PlanState, candidates: readonly OwnerCandidate[]):
   return tasks.some((t, i) => t !== p.tasks[i]) ? { ...p, tasks } : p;
 }
 
-/** The plan as a report carries it; null with no steps. A pending step that waits on an unfinished step is `blocked`. */
+/**
+ * The plan as a report carries it; null with no steps. A pending step that waits on an unfinished step is `blocked`. Its
+ * words (a step, its active form, the title) pass the narrow rules here, as every name a report carries does: a step can
+ * quote a token. The plan itself keeps them as written, which is what a rewritten step is matched by.
+ */
 export function planOf(p: PlanState): Plan | null {
   if (p.tasks.length === 0) return null;
+  const shown = (text: string | null): string | null => (text === null ? null : clip(text, LIMITS.text));
   const unfinished = new Set(p.tasks.filter((t) => t.status !== 'completed').map((t) => t.id));
   const steps = p.tasks.slice(0, 100).map(({ id, text, status, blockedBy, activeText, ownerAgentId, ownerLabel }): PlanStep => {
     const blocked = status === 'pending' && blockedBy.some((b) => unfinished.has(b));
-    return { id, text, state: blocked ? 'blocked' : STEP_STATE[status], activeText, ownerAgentId, ownerLabel };
+    return { id, text: clip(text, LIMITS.text), state: blocked ? 'blocked' : STEP_STATE[status], activeText: shown(activeText), ownerAgentId, ownerLabel };
   });
-  return { title: p.toolTitle ?? p.metaTitle, source: p.source ?? 'TaskCreate', steps };
+  return { title: shown(p.toolTitle ?? p.metaTitle), source: p.source ?? 'TaskCreate', steps };
 }

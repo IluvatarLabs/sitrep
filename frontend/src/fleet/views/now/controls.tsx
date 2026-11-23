@@ -33,7 +33,7 @@ function spentSoFar(list: readonly SessionView[]): string {
   return missing > 0 ? `${usd}, not counting ${plural(missing, "session")} with no cost` : usd;
 }
 
-function Select<T extends string>({ label, options, value, onChange }: { label: string; options: Record<T, string>; value: T; onChange: (v: T) => void }) {
+export function Select<T extends string>({ label, options, value, onChange }: { label: string; options: Record<T, string>; value: T; onChange: (v: T) => void }) {
   return (
     <label className="ctl-field">
       <span>{label}</span>

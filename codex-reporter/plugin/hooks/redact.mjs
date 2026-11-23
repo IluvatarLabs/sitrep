@@ -7,9 +7,10 @@
 //   input and the patch: text the owner reads to identify a thing or to judge an approval, which must stay as written
 //   wherever it holds no secret.
 // - `redactFreeText`: the broader rules, the same as the Claude reporter applies to command text
-//   (mod/claude-reporter/hooks/failures.ts), its `curl -u user:pass` rule among them, then the narrow rules, so it never redacts
-//   less. Only for display text taken from a command or a tool's free-text argument (a message to another agent): their
-//   entropy rule would also hide ids, names and paths.
+//   (mod/claude-reporter/hooks/failures.ts), its `curl -u user:pass` rule among them, then the narrow rules over the result,
+//   for what only those know. Only for text a person or a model wrote freely (a command, a tool's free-text argument, a
+//   message, the text a model request wrote, an agent's prompt and answer): their entropy rule would also hide ids, names
+//   and paths.
 // Best effort: a secret can take any shape.
 
 const MARK = '[redacted]';
@@ -166,15 +167,17 @@ function redactText(text) {
 const REDACT_PIECE = 1000;
 
 /**
- * One line in pieces of at most REDACT_PIECE characters, each ending just after a space when one falls in its range.
+ * One line in pieces of at most REDACT_PIECE characters: unshifted, each ending just after a space when one falls in its range;
+ * shifted, the first `shift` long and every cut fixed, so they mostly fall between an unshifted run's.
  * @param {string} line
+ * @param {number} shift
  */
-function piecesOf(line) {
+function piecesOf(line, shift) {
   const pieces = [];
   let start = 0;
   do {
-    let stop = Math.min(start + REDACT_PIECE, line.length);
-    if (stop < line.length) {
+    let stop = Math.min(start + (start === 0 && shift > 0 ? shift : REDACT_PIECE), line.length);
+    if (stop < line.length && shift === 0) {
       const space = line.lastIndexOf(' ', stop);
       if (space > start) stop = space + 1;
     }
@@ -185,14 +188,15 @@ function piecesOf(line) {
 }
 
 /**
- * `redactText` for a text of any size: a line over REDACT_PIECE is cut into pieces (at a space where it has one), each piece
- * redacted, and the line put back together. A secret straddling a cut is not seen.
+ * `redactText` for a text of any size: a line over REDACT_PIECE is cut into pieces (piecesOf), each piece redacted, and the line
+ * put back together. A secret straddling a cut is not seen in this pass (redactFreeText runs a second, `shift`ed).
  * @param {string} text
+ * @param {number} [shift]
  * @returns {string}
  */
-function redactBounded(text) {
+function redactBounded(text, shift = 0) {
   if (text.length <= REDACT_PIECE) return redactText(text);
-  const lines = text.split('\n').map(piecesOf);
+  const lines = text.split('\n').map((line) => piecesOf(line, shift));
   const flat = lines.flat();
   const redacted = redactText(flat.join('\n'));
   const back = redacted.split('\n');
@@ -218,11 +222,19 @@ export function redact(text) {
 }
 
 /**
- * Display text taken from a command: the broader rules first (`redactBounded`), then the narrow ones, so it never
- * redacts less than `redact`.
+ * Free text: the broader rules first (`redactBounded`), then the narrow ones over the result, for what only those know. Best
+ * effort, as every rule here is, and not always as much as `redact` alone: the narrow rules find a value by its key, and a
+ * broader rule can mask that key as another key's value and leave the value (`auth: password="…"` shows the quoted password,
+ * where `redact` masks it).
  * @param {string} text
  * @returns {string}
  */
 export function redactFreeText(text) {
-  return redact(redactBounded(text));
+  const once = redact(redactBounded(text));
+  // A secret a cut splits is in neither piece: where a line was cut, the whole redaction runs again over what the first pass
+  // gave, in fixed pieces offset by half a piece, so the first pass's cuts mostly fall inside the second's (overlapping windows,
+  // as chunked scanners read: trufflehog pkg/sources/chunker.go). Best effort: the first pass's masks move the second's cuts,
+  // and a secret the first pass masked in part is not whole for the second. A pass only masks, so the second never shows what
+  // the first masked.
+  return text.split('\n').some((line) => line.length > REDACT_PIECE) ? redact(redactBounded(once, REDACT_PIECE / 2)) : once;
 }

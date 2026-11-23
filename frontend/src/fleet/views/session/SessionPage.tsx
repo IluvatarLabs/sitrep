@@ -1,12 +1,13 @@
-// One session's page (#/s/<id>): its two-line head, what it asks of the owner, its facts, its plan as a checklist, then the
-// Timeline or the agent tree under one toolbar row, with the changed files in a column beside them that folds away ("—" while
+// One session's page (#/s/<id>): its two-line head, what it asks of the owner, its facts and its feedback, its plan as a
+// checklist, then the Timeline, the agent tree or its Turns (its record, once it has one) under one toolbar row, with the changed files in a column beside them that folds away ("—" while
 // they are not reported), and the message box at the foot. Picking a row anywhere on the page shows its detail in the
 // inspector: an agent's, or the main loop's from its own row. A stored
 // session from History opens the same page read-only: no asks, no Rename, no message box.
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { AgentTree, type AgentSort } from "../../components/AgentTree";
 import { BlowoutCallout } from "../../components/BlowoutCallout";
 import { FactsBar } from "../../components/FactsBar";
+import { FeedbackBox, useFeedback } from "../../components/Feedback";
 import { FilesList } from "../../components/FilesList";
 import { IconChevron } from "../../components/Icons";
 import { PlanSteps } from "../../components/PlanPanel";
@@ -20,19 +21,18 @@ import { dotsText } from "../../ui/Dots";
 import { Unknown } from "../../ui/Unknown";
 import { watchSize } from "../../useWallColumns";
 import { AskCard } from "./AskCard";
-import { useWidth } from "./bits";
+import { FLASH_MS, useWidth } from "./bits";
 import { PageComposer } from "./PageComposer";
 import { SessionHead, SessionNotices } from "./SessionHeader";
 import { Timeline } from "./Timeline";
+import { Turns } from "./Turns";
 import type { SessionEvents } from "./useSessionEvents";
 import "./session.css";
 
-type Mode = "timeline" | "agents";
+type Mode = "timeline" | "agents" | "turns";
 
 /** Launch order: no column sorts the agents. */
 const LAUNCH_ORDER: AgentSort = { key: null, dir: 1 };
-/** How long a row picked from outside the page stays marked. */
-const FLASH_MS = 2000;
 /** The owner's choice to fold or open the Files column, one for every session; absent until they make one. */
 const FOLD_KEY = "session.filesFolded";
 /** Below this page width the column starts folded, so the Timeline gets the room; an explicit choice wins either way. */
@@ -87,9 +87,7 @@ function launchedText(s: SessionView): string {
 
 /**
  * The sticky message box's height, published on the page as --sv-foot-h: the rows a pick brings into view keep that much
- * room below them (scroll-margin-block-end), so they are never left under the box. A callback ref, so it follows the box as it comes and goes. Whenever the page changes size while a row picked from
- * outside is still marked, that row is brought into view again: on a cold load what loads after the pick has scrolled (the
- * box becoming the composer once the sign-in check answers, the ask's detail, the Timeline's legend) moves the row down.
+ * room below them (scroll-margin-block-end), so they are never left under the box. A callback ref, so it follows the box as it comes and goes.
  */
 function useFootHeight(): (foot: HTMLElement | null) => void {
   const stop = useRef<(() => void) | null>(null);
@@ -104,7 +102,6 @@ function useFootHeight(): (foot: HTMLElement | null) => void {
         published = foot.offsetHeight;
         page.style.setProperty("--sv-foot-h", `${published}px`);
       }
-      page.querySelector<HTMLElement>(".sv-tl-row.flash, .ag-row.flash")?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     });
     stop.current = () => {
       unwatch();
@@ -113,7 +110,18 @@ function useFootHeight(): (foot: HTMLElement | null) => void {
   }, []);
 }
 
-/** Timeline or Agents: one radio group drawn as the shared segmented control, the first thing on the toolbar row. */
+/**
+ * Whenever the page changes size while a row picked from outside is still marked, that row is brought into view again: what
+ * loads after the pick has scrolled (the box becoming the composer once the sign-in check answers, the ask's detail, the
+ * Timeline's legend, a turn's first lines of kept text) moves the row down. On a stored session's page too. Once the mark
+ * is gone nothing moves under the reader.
+ */
+function useKeepPickInView(page: RefObject<HTMLElement>): void {
+  useEffect(() => watchSize(page.current, () => page.current?.querySelector<HTMLElement>(".sv-tl-row.flash, .ag-row.flash, .tn-row.flash")?.scrollIntoView?.({ block: "nearest", inline: "nearest" })), [page]);
+}
+
+/** Timeline, Agents, or Turns while the session has a record: one radio group drawn as the shared segmented control, the first
+ * thing on the toolbar row. */
 function ModeSwitch({ mode, s, onMode }: { mode: Mode; s: SessionView; onMode: (m: Mode) => void }) {
   const name = useId();
   // Plain words: the segment draws every span inside an option as the option itself.
@@ -121,6 +129,7 @@ function ModeSwitch({ mode, s, onMode }: { mode: Mode; s: SessionView; onMode: (
     { id: "timeline", label: "Timeline" },
     // The list it opens holds the main loop's row too, so its count does, as the facts' Agents cell counts it.
     { id: "agents", label: `Agents ${s.agents.length + 1}`, title: launchedText(s) },
+    ...(s.record ? [{ id: "turns" as const, label: `Turns ${s.record.turns}` }] : []),
   ];
   return (
     <fieldset className="ui-segment">
@@ -175,6 +184,8 @@ interface SessionPageProps {
   back?: ReactNode;
   /** This session's events (useSessionEvents), read once by whoever shows the page: the Timeline's marks, and its list on a stored page. */
   events: SessionEvents;
+  /** A row its address names (`step=`): the page opens on Turns at that row. */
+  step?: string | null;
 }
 
 export function SessionPage(props: SessionPageProps) {
@@ -182,14 +193,25 @@ export function SessionPage(props: SessionPageProps) {
   return <Page key={props.session.id} {...props} />;
 }
 
-function Page({ fleet, session: s, now, readOnly = false, back, events }: SessionPageProps) {
-  const [mode, setMode] = useState<Mode>("timeline");
+function Page({ fleet, session: s, now, readOnly = false, back, events, step = null }: SessionPageProps) {
+  const [chosenMode, setMode] = useState<Mode>(step ? "turns" : "timeline");
+  // The row last linked stays the one Turns places, though the address may drop it (a pick rewrites the address).
+  const [linked, setLinked] = useState(step);
+  useEffect(() => {
+    if (!step) return;
+    setLinked(step);
+    setMode("turns");
+  }, [step]);
+  // Turns is offered only while the session has a record.
+  const mode = chosenMode === "turns" && !s.record ? "timeline" : chosenMode;
+  const feedback = useFeedback(s.id);
   const [order, setOrder] = useState<AgentSort>(LAUNCH_ORDER);
   const [compactsOpen, setCompactsOpen] = useState(false);
   const [pageRef, pageWidth] = useWidth<HTMLDivElement>();
   const [folded, toggleFold] = useFilesFold(pageWidth);
   const { selected, flash, pickHere } = usePicked(s, readOnly);
   const footRef = useFootHeight();
+  useKeepPickInView(pageRef);
   const compactsId = useId();
 
   const waitingOn = waitingOnByRow(s);
@@ -215,18 +237,18 @@ function Page({ fleet, session: s, now, readOnly = false, back, events }: Sessio
       {!readOnly && needsYou(s) ? <AskCard s={s} now={now} /> : null}
       <FactsBar s={s} now={now} readOnly={readOnly} onAgent={pickHere} compacts={{ open: compactsShown, onToggle: () => setCompactsOpen(!compactsOpen), controls: compactsId }} />
       {compactsShown ? <BlowoutCallout s={s} onAgent={pickHere} id={compactsId} /> : null}
+      <FeedbackBox fb={feedback} rowId={null} />
       {planProgress(s.plan) ? (
         <section className="sv-planbox" aria-label="Plan">
           <PlanSteps s={s} now={now} />
         </section>
       ) : null}
       <div className={bodyClass}>
-        <section className="sv-main" aria-label={mode === "timeline" ? "Timeline" : "Agents"}>
-          {mode === "timeline" ? (
-            <Timeline s={s} now={now} events={events} eventList={readOnly} sort={order} onSort={setOrder} selected={selected} flash={flash} onAgent={pickHere} lead={switcher} />
-          ) : (
-            <AgentTree s={s} waiting={waitingOn} now={now} sort={order} onSort={onTableSort} selectedAgent={selected} flashAgent={flash} onSelect={pickHere} lead={switcher} />
-          )}
+        <section className="sv-main" aria-label={mode === "timeline" ? "Timeline" : mode === "agents" ? "Agents" : "Turns"}>
+          {mode === "timeline" ? <Timeline s={s} now={now} events={events} eventList={readOnly} sort={order} onSort={setOrder} selected={selected} flash={flash} onAgent={pickHere} lead={switcher} /> : null}
+          {mode === "agents" ? <AgentTree s={s} waiting={waitingOn} now={now} sort={order} onSort={onTableSort} selectedAgent={selected} flashAgent={flash} onSelect={pickHere} lead={switcher} /> : null}
+          {/* The main loop runs while the session's status says so, as the facts count it (logic.ts sessionCounts); a stored session's never does. */}
+          {mode === "turns" ? <Turns s={s} runs={!readOnly && s.status === "running"} step={linked} feedback={feedback} lead={switcher} /> : null}
         </section>
         {files === null ? null : <FilesColumn s={s} folded={folded} onFold={toggleFold} />}
       </div>

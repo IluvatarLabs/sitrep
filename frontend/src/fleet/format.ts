@@ -69,6 +69,10 @@ export function fmtDay(at: number): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
+/** A moment with its day, YYYY-MM-DD HH:MM, local: where it may fall on another day than the one in view (an issue seen or
+ * closed, feedback left, a session that ended in a range of days). */
+export const fmtWhen = (at: number): string => `${fmtDay(at)} ${fmtClock(at).slice(0, 5)}`;
+
 /** A count with grouped digits: 18,402. */
 export function fmtCount(n: number): string {
   return n.toLocaleString("en-US");

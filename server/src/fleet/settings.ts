@@ -1,4 +1,4 @@
-// The server settings the Settings page edits: the switches (respond, activityFeed and requireSignInToView), the stuck
+// The server settings the Settings page edits: the switches (respond, activityFeed, trace and requireSignInToView), the stuck
 // thresholds per model family, the lifecycle timers and retention. `server.env` gives each one's default; what the owner
 // changes is kept in the `settings` table, wins over the default, and applies without a restart. Resetting a setting drops the
 // owner's change.
@@ -10,6 +10,7 @@ const DAY_MS = 86_400_000;
 export const BUILT_IN: EditableSettings = {
   respond: true,
   activityFeed: true,
+  trace: true,
   requireSignInToView: false,
   stuckAfterMs: { opus: 600_000, sonnet: 240_000, haiku: 180_000, fable: 180_000, openai: 180_000, other: 180_000 },
   lifecycle: { removeAfterMs: 75_000, lingerMs: 8_000, detachedHideAfterMs: 60_000 },
@@ -32,7 +33,7 @@ const NUMBERS = {
 
 type Group = 'stuckAfterMs' | 'lifecycle' | 'retention';
 const GROUPS = Object.keys(NUMBERS) as Group[];
-const SWITCHES = ['respond', 'activityFeed', 'requireSignInToView'] as const;
+const SWITCHES = ['respond', 'activityFeed', 'trace', 'requireSignInToView'] as const;
 
 /** The owner's changes as stored: any switch, and any settings of any group. */
 export type SettingsPatch = Partial<Pick<EditableSettings, (typeof SWITCHES)[number]>> & { [G in Group]?: Partial<EditableSettings[G]> };
@@ -80,6 +81,7 @@ export function settingsFromEnv(env: NodeJS.ProcessEnv): EditableSettings {
   const out = {
     respond: envSwitch(env, 'SITREP_RESPOND', BUILT_IN.respond),
     activityFeed: envSwitch(env, 'SITREP_ACTIVITY_FEED', BUILT_IN.activityFeed),
+    trace: envSwitch(env, 'SITREP_TRACE', BUILT_IN.trace),
     requireSignInToView: envSwitch(env, 'SITREP_REQUIRE_SIGN_IN_TO_VIEW', BUILT_IN.requireSignInToView),
   } as EditableSettings;
   for (const g of GROUPS) {

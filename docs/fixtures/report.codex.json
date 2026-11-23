@@ -16,7 +16,7 @@
     "cwd": "/home/dev/payments-api",
     "projectRoot": "/home/dev/payments-api",
     "repoName": "acme/payments-api",
-    "git": { "branch": "feat/settlement-retries", "detached": false, "isWorktree": false, "worktreePath": null, "ahead": 2, "behind": 0, "dirty": 2 },
+    "git": { "branch": "feat/settlement-retries", "detached": false, "isWorktree": false, "worktreePath": null, "ahead": 2, "behind": 0, "dirty": 2, "commit": "3f2a9c1e5b7d4a6f8e0c1b2d3a4f5e6d7c8b9a0f" },
     "model": "gpt-6-sol",
     "effort": "high",
     "context": { "tokens": 98000, "window": 272000, "percent": 33 },
@@ -112,5 +112,10 @@
     { "id": "019a3f2e-7b41-7c90-9d2a-4e81c6f0b357:019a3f31-2c5e-7d14-8b6f-90a1e2d3c4b5:spawn:1791650400000:1", "t": 1791650400000, "kind": "spawn", "agentId": "019a3f31-2c5e-7d14-8b6f-90a1e2d3c4b5", "text": "spawned explorer Hopper: Find every caller of the settlement retry helper", "data": null },
     { "id": "019a3f2e-7b41-7c90-9d2a-4e81c6f0b357:main:edit:1791651300000:2", "t": 1791651300000, "kind": "edit", "agentId": null, "text": "edited retry.ts", "data": { "path": "/home/dev/payments-api/src/settlement/retry.ts" } },
     { "id": "019a3f2e-7b41-7c90-9d2a-4e81c6f0b357:main:wait:1791651590000:3", "t": 1791651590000, "kind": "wait", "agentId": null, "text": "waiting on you: Shell(pnpm test --filter settlement)", "data": null }
+  ],
+  "rows": [
+    { "id": "019a2f5c-turn-0001", "kind": "turn", "agentId": null, "t0": 1791649801000, "t1": null, "end": null },
+    { "id": "resp_019a2f5d0001", "kind": "request", "agentId": null, "t0": 1791649801120, "t1": null, "model": "gpt-6-sol", "effort": "high", "tokens": { "input": 3200, "output": 410, "cacheRead": 88000, "cacheWrite": 1200 }, "stop": null },
+    { "id": "call_019a2f5e0001", "kind": "tool", "agentId": null, "t0": 1791649803500, "t1": 1791649804900, "tool": "shell", "outcome": "failed", "exit": 1, "callHash": "451dfa5d", "errorHash": "b49f46ab213d979685aca5027d5be1af2203ba6beb2eadf404cc382329292107" }
   ]
 }

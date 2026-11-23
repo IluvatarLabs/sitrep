@@ -8,13 +8,14 @@
 //   CODEX_REPORTER_RESPOND        off | questions | questions-and-plans | everything (default everything)
 //   CODEX_REPORTER_ACTIVITY_FEED  on unless "off", "false" or "0"
 //   CODEX_REPORTER_CODEX_BIN      the `codex` executable used for `codex app-server daemon version` (default: codex on PATH)
+//   CODEX_REPORTER_CAPTURE        off | trace | full: what of each session's record is sent (default trace; config.ts)
 // (The server's own SITREP_RESPOND is on/off while this one is a level, so the names differ.)
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { RESPOND_LEVELS, RESPOND_LIMITS, type MachineInfo, type RespondLevel } from '../../server/src/fleet/protocol.js';
-import { env, serverUrl, token } from './config.js';
+import { capture, env, serverUrl, token } from './config.js';
 import { Daemon } from './daemon.js';
 import { gitRunner, placeOf, readChanges, readGit } from './git.js';
 import { readMachine } from './machine.js';
@@ -168,6 +169,12 @@ let names = NO_NAMES;
 const liveCwds = () =>
   [...fleet.sessions.values()].filter((s) => fleet.isLive(s)).map((s) => fleet.cwdOf(s)).filter((c): c is string => !!c);
 
+/**
+ * Threads Codex runs for itself and shows in no client of its own, by id: the one that names a new session
+ * (`threadSource: "thread_title"`, ephemeral, no session file, no hooks). Never reported, as Codex never lists them.
+ */
+const codexOwn = new Set<string>();
+
 const daemon = new Daemon(
   codexBin,
   VERSION,
@@ -178,12 +185,17 @@ const daemon = new Daemon(
       responder.disconnected();
     },
     thread: (t) => {
+      if (t.threadSource === 'thread_title') {
+        codexOwn.add(t.id);
+        return;
+      }
       fleet.applyDaemonThread(t);
       responder.statusChanged(t.id);
       void responder.considerRejoin(t.id);
       responder.pump();
     },
     status: (id, status) => {
+      if (codexOwn.has(id)) return;
       const known = fleet.threads.get(id);
       if (!known) {
         // Not seen yet: read it (read-only) to learn its session tree; the read applies its status.
@@ -232,7 +244,7 @@ function readHooks(tail: JsonlTail, budget: number): void {
  */
 function reported(s: Session, now: number): boolean {
   const root = fleet.thread(s.id);
-  return root.ended ? s.finalFor !== root.endedAt : fleet.isLive(s, now) || s.usagePending;
+  return fleet.hasEnded(root) ? s.finalFor !== root.endedAt : fleet.isLive(s, now) || s.usagePending;
 }
 
 /** New records of every thread's tailed (plain) newest file, live sessions first, within the tick's budget. */
@@ -377,6 +389,8 @@ async function pollGit(s: Session): Promise<void> {
     }
     s.git = await readGit(git, cwd);
     const changes = await readChanges(git, cwd, s.gitBase ?? saved.gitBases[s.id] ?? null);
+    // The commit HEAD is at, from the `rev-parse HEAD` the files read already runs; unknown when that read failed.
+    if (s.git) s.git.commit = changes?.head ?? null;
     if (changes) {
       s.files = changes.files;
       if (changes.base !== saved.gitBases[s.id]) {
@@ -401,6 +415,7 @@ async function sendReport(s: Session, now: number, force: boolean): Promise<void
     transports.set(s.id, tr);
   }
   tr.push(fleet.drainEvents(s));
+  tr.pushRows(fleet.drainRows(s));
   if (s.placeCwd === null) void pollGit(s); // the first read at once, not a poll interval later
   // A report names its machine, whose id is never made up: until it can be read, nothing is sent and the session stays dirty.
   const from = machine;
@@ -409,7 +424,7 @@ async function sendReport(s: Session, now: number, force: boolean): Promise<void
   const respond = responder.respondInfo(s);
   const wasResponding = tr.respond;
   const root = fleet.thread(s.id);
-  const final = root.ended ? root.endedAt : null;
+  const final = fleet.hasEnded(root) ? root.endedAt : null;
   const ready = usageReady(s);
   const outcome = await tr.send(
     (events) =>
@@ -437,7 +452,8 @@ async function sendReport(s: Session, now: number, force: boolean): Promise<void
     // any other reply is not, so a request the dashboard cannot answer is not replayed after every report.
     if (tr.respond && !wasResponding) for (const t of fleet.threadsOf(s.id)) void responder.considerRejoin(t.id);
   } else if (outcome !== 'rejected') s.dirty = true;
-  if (final !== null && outcome !== 'later') s.finalFor = final;
+  // The final report is sent again while rows of the session wait, so the record's last rows reach the server too.
+  if (final !== null && outcome !== 'later' && !tr.rowsPending()) s.finalFor = final;
 }
 
 /** Each tick reads and decides synchronously; posts run on their own (one per session at a time), so a slow server never stalls reading. */
@@ -475,7 +491,7 @@ function tick(): void {
     attach(now);
     for (const s of fleet.sessions.values()) {
       const root = fleet.thread(s.id);
-      if (root.ended) {
+      if (fleet.hasEnded(root)) {
         // The final report waits for the session's usage to be complete and is sent until the server takes it (or refuses it
         // for good); then the session is no longer reported.
         if (s.finalFor !== root.endedAt) {
@@ -504,7 +520,7 @@ async function readThisMachine(): Promise<void> {
   if (machine !== null) return;
   try {
     machine = await readMachine();
-    log(`codex-reporter ${VERSION}: reporting to ${serverUrl} as ${machine.name} (respond ${level}, activity feed ${activityFeed ? 'on' : 'off'})`);
+    log(`codex-reporter ${VERSION}: reporting to ${serverUrl} as ${machine.name} (respond ${level}, activity feed ${activityFeed ? 'on' : 'off'}, capture ${capture})`);
   } catch (err) {
     const why = (err as Error).message;
     if (why !== unreadMachine) log(`codex-reporter: not reporting or answering: this machine's id cannot be read (${why})`);

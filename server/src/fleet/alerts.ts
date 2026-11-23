@@ -1,5 +1,6 @@
-// The observability rules: stuck, errored and file collisions. Pure functions over what the reporters already send; no I/O here.
-import type { CollisionView, ErroredState, ModelFamily, SessionStatusView, SessionView } from './protocol.js';
+// The observability rules: stuck, errored, file collisions, a repeated call, and whether a session needs someone. Pure functions
+// over what the reporters already send; no I/O here.
+import { idleOnBackground, type CollisionView, type ErroredState, type ModelFamily, type SessionStatusView, type SessionView } from './protocol.js';
 import type { EditRow } from './db.js';
 
 // ---- stuck ----------------------------------------------------------------------------
@@ -62,6 +63,31 @@ export function erroredState(s: ErroredInput, now: number): ErroredState | null 
   if (silentAfterFailure) return { cause: 'tools', detail: s.lastTool };
   return null;
 }
+
+// ---- a repeated call ------------------------------------------------------------------
+
+/** The retry rule: one tool with identical, kept input this many times in a row in one loop. */
+export const REPEAT_RUN = 3;
+/** Changes whenever the rule's results would. Each note carries the version it was written under. */
+export const REPEAT_RULE = 1;
+
+/** A loop's run of identical calls so far: the calls' fingerprint (null when the last call's input was not kept) and how many. */
+export interface CallRun {
+  hash: string | null;
+  count: number;
+}
+
+/** The run after one more call of its loop, and whether that call is the one that makes it a repeat: its third, noted once. */
+export function repeated(run: CallRun | undefined, callHash: string | null): { run: CallRun; noted: boolean } {
+  const count = callHash !== null && run?.hash === callHash ? run.count + 1 : 1;
+  return { run: { hash: callHash, count }, noted: count === REPEAT_RUN };
+}
+
+// ---- needing someone ------------------------------------------------------------------
+
+/** A live session that waits on an answer, or is failed or stuck: what a claim is for, and what ends one when it stops holding. */
+export const needsSomeone = (s: Pick<SessionView, 'status' | 'waitReason' | 'background' | 'asks' | 'stuck' | 'errored'>): boolean =>
+  s.status !== 'done' && (s.stuck || s.errored !== null || s.asks.some((a) => a.state !== 'closed') || (s.status === 'waiting' && s.waitReason !== 'idle' && !idleOnBackground(s)));
 
 // ---- file collisions ------------------------------------------------------------------
 

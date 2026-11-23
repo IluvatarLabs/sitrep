@@ -1,1 +1,3 @@
 .claude-plugin/types/
+# Claude Code's plugin API declarations, Anthropic's and not ours to distribute (typecheck.sh).
+types/claude-code.d.ts

@@ -82,6 +82,11 @@ export type Thread = {
   agentRole: string | null;
   /** Optional user-facing thread title. */
   name: string | null;
+  /**
+   * Who the thread is for: "user", or a job Codex runs for itself, as "thread_title", the hidden thread that names a new
+   * session. Sent by app-server 0.167; absent from older ones.
+   */
+  threadSource?: string | null;
 };
 
 export type ThreadStartedNotification = { thread: Thread };

@@ -1,12 +1,14 @@
 // Needs you, one of Attention's two lists (NowView); its heading counts the sessions that need you, as every
 // needs-you count does: one item per open ask, and per session that needs you with none open, in the one order the top bar's
 // button and the answer drawer step in (queue.ts). Two lines each: the wait as a clock, who asks, what, the model and the
-// machine; then the question or command with its answer controls (ui/AnswerInline), or, when it can't be
+// machine, and who claimed the session once someone has (components/Claim), so a second person sees it is being handled before
+// they answer; then the question or command with its answer controls (ui/AnswerInline), or, when it can't be
 // answered from here, the note the answer drawer and the session page show in its place, with why on hover (components/Compose
 // OffNote). A session's asks behind its current one read "Queued". An ask that settles keeps a quiet line for a moment; the page
 // cannot tell who answered it. The rows scroll inside a box of fixed height, an eighth of the window, the same at every count
 // (empty at 0, the heading's 0 saying so), so asks arriving, settling or leaving never move the Sessions below.
 import { hashFor } from "../../../route";
+import { Claimed } from "../../components/Claim";
 import { OffNote } from "../../components/Compose";
 import { fmtSpan } from "../../format";
 import { providerInfo } from "../../provider";
@@ -63,6 +65,7 @@ function Row({ item, now, machine }: { item: QueueItem; now: number; machine: st
             machine,
           ]}
         />
+        <Claimed claim={s.claim} />
       </div>
       <div className="nw-l2">
         {item.text ? <p className="nw-text">{item.text}</p> : null}

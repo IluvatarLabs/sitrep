@@ -112,6 +112,8 @@ export interface GitInfo {
   ahead: number;
   behind: number;
   dirty: number;
+  /** The commit HEAD is at, in full; null or absent when the reporter does not send it. */
+  commit?: string | null;
 }
 
 /** How a file changed. */
@@ -458,7 +460,88 @@ export interface Report {
   agents: AgentReport[];
   /** The events not yet acknowledged. */
   events: ActivityEvent[];
+  /** The record's rows not yet acknowledged; absent from a reporter that keeps none, or while the server's reply says `trace: false`. */
+  rows?: TraceRow[];
   machine: MachineInfo;
+}
+
+// ---- The record: every turn, model request and tool call ---------------------------------------
+
+/** What a machine sends of a session's record: nothing, its structure, or its structure and its text. */
+export const CAPTURE_LEVELS = ['off', 'trace', 'full'] as const;
+export type CaptureLevel = (typeof CAPTURE_LEVELS)[number];
+
+const ROW_KINDS = ['turn', 'request', 'tool', 'gap'] as const;
+export type RowKind = (typeof ROW_KINDS)[number];
+/** How a turn ended, in Claude Code's words (TurnCompleteReason); another harness's are mapped onto them. */
+const TURN_ENDS = ['answer', 'aborted', 'refusal', 'error'] as const;
+export type TurnEnd = (typeof TURN_ENDS)[number];
+/** How a tool call ended, where the harness says. */
+const TOOL_OUTCOMES = ['ok', 'failed', 'denied', 'interrupted'] as const;
+export type ToolOutcome = (typeof TOOL_OUTCOMES)[number];
+/** The texts a row may carry at full capture: a turn's prompt; a model request's message and visible thinking; a tool call's input and output. */
+export const TEXT_PARTS = ['prompt', 'message', 'thinking', 'input', 'output'] as const;
+export type TextPart = (typeof TEXT_PARTS)[number];
+export type RowText = Partial<Record<TextPart, string>>;
+
+/**
+ * One row of a session's record: a turn of its main loop, a model request, a tool call, or a gap where the reporter dropped rows.
+ * Rows carry no turn id: a session's rows in time order are cut into turns at each `turn` row. A row is sent once, when it ends;
+ * a turn is sent when it starts and again, under the same id, when it ends, and a row sent again replaces the stored one.
+ * A value the harness does not give is null, never a guess.
+ */
+export interface TraceRow {
+  /** Unique in its session, and the same each time the row is sent. */
+  id: string;
+  kind: RowKind;
+  /** The loop it ran in: null for the main loop, else the agent's id. */
+  agentId: string | null;
+  /** When it started and ended, on the reporter's clock (ms); `t1` is null while a turn runs and where the harness records no end. */
+  t0: number;
+  t1: number | null;
+  /** A turn: how it ended; null while it runs. */
+  end?: TurnEnd | null;
+  /** A model request: the model that answered, the effort asked, what it cost, and why the model stopped. */
+  model?: string | null;
+  effort?: string | null;
+  tokens?: TokenCounts | null;
+  stop?: string | null;
+  /** A tool call: the tool, how it ended, and its exit code where the harness gives one. */
+  tool?: string;
+  outcome?: ToolOutcome | null;
+  exit?: number | null;
+  /** A tool call's two hashes (`callHash`, and the SHA-256 of `errorKey` on a failed call), sent in place of its input and its error. */
+  callHash?: string | null;
+  errorHash?: string | null;
+  /** A gap: how many rows were dropped here. */
+  count?: number;
+  /** Full capture only: the row's text, redacted on the machine, each part cut at 20,000 characters. */
+  text?: RowText;
+}
+
+/**
+ * A call's fingerprint, by which a repeated call is seen without its input: 32-bit FNV-1a over the UTF-8 bytes of the tool's
+ * name, a zero byte and its input as JSON, as 8 hex digits. Null for an input not kept, which cannot be shown to repeat.
+ */
+export function callHash(tool: string, inputJson: string): string | null {
+  if (inputJson === '') return null;
+  let h = 0x811c9dc5;
+  for (const byte of new TextEncoder().encode(`${tool}\u0000${inputJson}`)) h = Math.imul(h ^ byte, 0x01000193);
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+/** A shell's timeout sentence with nothing else: it says nothing of what failed. */
+const BARE_TIMEOUT = /^command timed out after \d+ seconds?\.?$/i;
+
+/**
+ * What a failed call's issue is keyed by: its tool and the first 80 characters of its error. Null when the error is blank, or a
+ * shell's is only the timeout sentence: such a call joins no issue. The reporter sends this key's SHA-256 as the row's
+ * `errorHash`, never the key.
+ */
+export function errorKey(tool: string, error: string, shell: boolean): string | null {
+  const text = error.trim();
+  if (text === '' || (shell && BARE_TIMEOUT.test(text))) return null;
+  return `${tool}: ${Array.from(text).slice(0, 80).join('')}`;
 }
 
 /** "1 shell, 1 agent": a background wait counted by kind, as the activity feed's wait row reads it. */
@@ -644,6 +727,9 @@ export interface ReportReply {
   ok: true;
   serverTime: number;
   ackedEvents: number;
+  /** How many of the report's rows, from the first, it has taken, and whether the server keeps a record at all (its `trace` setting). */
+  ackedRows: number;
+  trace: boolean;
   /** The report's own `session.id`, and how many live sessions are on the wall. */
   sessionId: string;
   liveSessions: number;
@@ -676,6 +762,65 @@ export interface ModelPriceSet {
 
 /** The model's family, from a lowercase match on its id: Claude's four, `openai` for Codex models, else `other`. */
 export type ModelFamily = 'opus' | 'sonnet' | 'haiku' | 'fable' | 'openai' | 'other';
+
+/** GPT, ChatGPT and Codex ids, and the o-series. */
+const OPENAI_ID = /^(gpt|chatgpt|codex)([-._:\d]|$)|^o\d/;
+/** A bare Claude alias, bracketed suffix allowed (`opus[1m]`). */
+const CLAUDE_ALIAS = /^(opus|sonnet|haiku|fable|opusplan)(\[[^\]]*\])?$/;
+
+/** The Claude families a model id can name, tried in this order. */
+const CLAUDE_FAMILIES = ['opus', 'sonnet', 'haiku', 'fable'] as const;
+
+/**
+ * The family a model belongs to, read from its id in any case: `openai` for the GPT, ChatGPT, Codex and o-series
+ * models Codex runs; a Claude family for a bare Claude Code alias or an id that names Claude; `other` for everything else, so a
+ * model whose id merely contains a family's word is not taken for Claude.
+ */
+export const family = (model: string | null | undefined): ModelFamily => {
+  const id = model?.toLowerCase() ?? '';
+  if (OPENAI_ID.test(id)) return 'openai';
+  const claude = id.includes('claude') || CLAUDE_ALIAS.test(id);
+  return (claude && CLAUDE_FAMILIES.find((name) => id.includes(name))) || 'other';
+};
+
+/**
+ * The version in a Claude model id: 5.5 for claude-sonnet-5-5, 4 for claude-opus-4-20250514, 3.5 for claude-3-5-sonnet-20241022,
+ * and 4.5 for a gateway's anthropic/claude-sonnet-4.5; null for an alias or another maker's id. A version part is one or two
+ * digits, so a date is never one.
+ */
+const VERSION_AFTER = /(?:opus|sonnet|haiku|fable)-(\d{1,2}(?:[-.]\d{1,2})?)(?!\d)/;
+const VERSION_BEFORE = /claude-(\d{1,2}(?:[-.]\d{1,2})?)-(?:opus|sonnet|haiku|fable)/;
+
+export function modelVersion(id: string | null): string | null {
+  const lower = id?.toLowerCase() ?? '';
+  if (!lower.includes('claude')) return null;
+  return (VERSION_AFTER.exec(lower) ?? VERSION_BEFORE.exec(lower))?.[1]?.replace('-', '.') ?? null;
+}
+
+/**
+ * Codex's own name for a model id (codex-rs/tui/src/status/thread_usage.rs:265-297 and model_catalog's one alias):
+ * 'gpt-6-astra' is 'GPT-6 Astra', 'gpt-5-mini' 'GPT-5 Mini', 'gpt-5.4' 'GPT-5.4'; an id that is not GPT stays as it is.
+ */
+function codexName(id: string): string {
+  if (id.toLowerCase() === 'gpt-reserve') return 'Luna Reserve';
+  const cut = id.indexOf('-');
+  if (cut < 0 || cut === id.length - 1 || id.slice(0, cut).toLowerCase() !== 'gpt') return id;
+  const [first = '', ...rest] = id.slice(cut + 1).split('-');
+  const join = /^\d/.test(first) ? ' ' : '-';
+  const word = (w: string) => (w.toLowerCase() === 'oai' ? 'OAI' : w.charAt(0).toUpperCase() + w.slice(1));
+  return `GPT-${first}${rest.map((w) => join + word(w)).join('')}`;
+}
+
+/** A model as its harness names it: a Claude family and its version ('Sonnet 5.5'), any other id by Codex's rule. */
+export function familyName(family: ModelFamily, id: string | null): string {
+  if (!(CLAUDE_FAMILIES as readonly ModelFamily[]).includes(family)) return id === null ? (family === 'openai' ? 'OpenAI' : 'unknown') : codexName(id);
+  const version = modelVersion(id);
+  const name = family.charAt(0).toUpperCase() + family.slice(1);
+  return version ? `${name} ${version}` : name;
+}
+
+/** A model named from its id alone, where no family comes with it: its family by the server's rule for an id (protocol family). */
+export const modelIdName = (id: string): string => familyName(family(id), id);
 
 /** A session's status on its card: what its reporter last said. */
 export type SessionStatusView = SessionReport['status'];
@@ -858,6 +1003,10 @@ export interface SessionView {
   collisions: CollisionView[];
   /** Messages between this session's loops in the last 30 minutes, oldest first, at most 20. */
   messages: MessageView[];
+  /** Its record in figures; null when no row of it is stored. */
+  record: RecordCounts | null;
+  /** Who claimed it while it needs someone; null when nobody has, and once it no longer does. */
+  claim: Claim | null;
   agents: AgentView[];
   /**
    * `tokensPerSec`, `peakContext`, `running`, `blowoutSecondsAgo`: 60 points each, one a second, oldest first; `peakContext`
@@ -922,10 +1071,146 @@ export interface AskClosure {
 export interface RespondMe {
   /** The admin secret is set and the server's `respond` setting is on. */
   enabled: boolean;
+  /** The server has no admin secret, so no sign-in: kept text, which elsewhere only a signed-in reader reads, is read by anyone. */
+  open: boolean;
   /** Whether this browser is signed in, under what name (`Admin`; null until signed in), and whether as the admin. */
   signedIn: boolean;
   name: string | null;
   admin: boolean;
+}
+
+// ---- The record, feedback, issues and claims as the browser reads them -------------------------
+
+/** A session's record in figures: its turns, model requests, tool calls and failed tool calls, and the newest stored row's `seq`, which moves whenever a row is stored. */
+export interface RecordCounts {
+  turns: number;
+  requests: number;
+  toolCalls: number;
+  /** The tool calls whose outcome a reporter gave; the failed ones are among them. 0 beside tool calls: no outcome is known, so neither is how many failed. */
+  knownCalls: number;
+  failedCalls: number;
+  seq: number;
+}
+
+/**
+ * Why a session ended, in the fewest words: what History's End reason column shows for a stored reason, and what its `end:` word
+ * is matched against beside the stored reason itself. A reason not listed shows as it is stored.
+ */
+export const END_WORDS: Readonly<Record<string, string>> = { clear: 'Cleared', resume: 'Switched', logout: 'Logged out', prompt_input_exit: 'Exited', other: 'Ended', 'heartbeat lost': 'Went offline' };
+
+/** A stored row: a TraceRow without its text, the order it was stored in, and whether any text is kept for it. */
+export interface RowView extends Omit<TraceRow, 'text'> {
+  seq: number;
+  kept: boolean;
+}
+
+/**
+ * GET /sessions/:id/rows: a session's rows by `seq`. With no query, its newest ROWS_PAGE; `after=<seq>` those stored since, oldest
+ * first (what an open page asks for when RecordCounts.seq moves); `before=<seq>` the ROWS_PAGE before it. `more`: older rows remain.
+ */
+export interface RowsReply {
+  rows: RowView[];
+  more: boolean;
+}
+export const ROWS_PAGE = 2000;
+
+/** One kept text. GET /sessions/:id/text, signed in: `row=<id>` gives a row's texts whole; `from=<t0>&until=<t0>` those of the rows started in that span, each cut as TEXT_PREVIEW says, `chars` its full length. */
+export interface KeptText {
+  rowId: string;
+  part: TextPart;
+  text: string;
+  chars: number;
+}
+/**
+ * How much of each text an open turn's previews read. A prompt keeps its first 2,000 characters, since the browser runs the two
+ * text rules (findings.ts) on the prompt it is shown. Every other part keeps its first 1,000: a preview shows three lines
+ * (frontend session.css `.tn-text`, 13 px monospace, about 7.8 px a character), and 1,000 fills them where a line is up to
+ * about 2,600 px wide (333 characters), past the widest the console is checked at (1,920). `chars` says when one was cut.
+ */
+export const TEXT_PREVIEW = { prompt: 2000, other: 1000 } as const;
+
+/** Who took responsibility for a session or an issue, and when. A name is whatever its owner typed at sign-in. */
+export interface Claim {
+  by: string;
+  at: number;
+}
+
+/** Feedback a person left on a session (`rowId` null) or on one of its rows: a tag with a score or a value, and a comment. */
+export interface Feedback {
+  id: number;
+  rowId: string | null;
+  key: string;
+  score: number | null;
+  value: string | null;
+  comment: string | null;
+  by: string;
+  at: number;
+}
+
+/**
+ * An error that recurs: the failed tool calls that share one `errorHash`, counted over the rows stored. Only what a person did
+ * to it is kept for good: its last close and its claim.
+ */
+export interface IssueView {
+  /** The failed calls' `errorHash`. */
+  key: string;
+  tool: string;
+  /** The error's first line, from an occurrence whose text was kept, for a signed-in reader; null otherwise. `errorKept`: one was kept. */
+  error: string | null;
+  errorKept: boolean;
+  sessions: number;
+  calls: number;
+  firstAt: number;
+  lastAt: number;
+  /** Closed as resolved or as incorrectly flagged, else open. One closed as resolved that occurred again after the close is open, and `recurred`. */
+  status: 'open' | 'resolved' | 'flagged';
+  recurred: boolean;
+  /** Its last close: how, why, who and when. Shown still when it is open again. */
+  closed: { as: 'resolved' | 'flagged'; reason: string | null; by: string; at: number } | null;
+  claim: Claim | null;
+}
+
+/** One failed call of an issue, with what a brief for the user's own agent needs to find it again. */
+export interface IssueOccurrence {
+  sessionId: string;
+  sessionName: string;
+  rowId: string;
+  at: number;
+  project: string;
+  model: string | null;
+  engineVersion: string | null;
+  commit: string | null;
+  resumeCommand: string | null;
+}
+
+/** GET /issues/:key: the issue, its newest occurrences, and, signed in, the newest kept input and output among them. */
+export interface IssueDetail {
+  issue: IssueView;
+  occurrences: IssueOccurrence[];
+  input: string | null;
+  output: string | null;
+}
+
+/** What History groups by. */
+export const GROUP_KEYS = ['day', 'week', 'model', 'engine', 'project', 'machine', 'feedback'] as const;
+export type GroupKey = (typeof GROUP_KEYS)[number];
+
+/**
+ * One group of History's sessions (`key`: a day, a week's Monday, a model's name (modelIdName), a harness and its version, a
+ * project, a machine or a feedback tag; "—" for the sessions that have none): how many, and what one typically took (the median of those that have the figure; null when
+ * none has). `costPartial`: a cost the typical cost was taken from leaves out usage on models with no price
+ * (HistoryRow.costPartial); each true cost is at least its known part, so the true median is at least the one shown.
+ * `failedShare` is the group's failed tool calls over its tool calls whose outcome is known, 0..1; null when none is.
+ */
+export interface HistoryGroup {
+  key: string;
+  sessions: number;
+  durationSec: number;
+  costUsd: number | null;
+  costPartial: boolean;
+  turns: number | null;
+  toolCalls: number | null;
+  failedShare: number | null;
 }
 
 /** A stored activity event as the UI shows it: the event, with its session's id, name and model family. */
@@ -995,6 +1280,8 @@ export interface LifecycleConfig {
 export interface ServerSettings {
   respond: boolean;
   activityFeed: boolean;
+  /** Whether the server keeps a record of turns, model requests and tool calls; off, reporters send none and SITREP is the console alone. */
+  trace: boolean;
 }
 
 /** What Settings edits: the three switches, the stuck thresholds per family, the lifecycle timers and retention. The
@@ -1006,6 +1293,7 @@ export interface ServerSettings {
 export interface EditableSettings {
   respond: boolean;
   activityFeed: boolean;
+  trace: boolean;
   requireSignInToView: boolean;
   stuckAfterMs: Record<ModelFamily, number>;
   lifecycle: LifecycleConfig;
@@ -1068,7 +1356,7 @@ export interface RefusalView {
  * - POST   /machines/remove-silent        → { removed: string[] } (every silent and not-since-restart machine)
  * - DELETE /sessions/:id                  a stored session → { ok: true }; 409 while it is live
  * - PUT    /sessions/:id/name             { name: string | null } (at most 80 characters; null clears) → { ok: true }
- * - GET    /backup                        a consistent copy of the database (`VACUUM INTO`), as a download
+ * - GET    /backup                        a consistent copy of the database (SQLite's online backup), as a download
  */
 export const ADMIN_BASE = '/api/fleet/admin';
 
@@ -1157,7 +1445,24 @@ export interface HistoryRow {
   /** The `id` of the session this one continued after a /clear, and of the one that continued it, on the same machine; null when none. */
   clearedFrom: string | null;
   clearedInto: string | null;
+  /** The machine it ran on, its harness's version and the commit its checkout was at; null where not reported. */
+  machineName: string | null;
+  engineVersion: string | null;
+  commit: string | null;
+  /** Its record in figures (null when none was kept), and the feedback left on it and on its rows. */
+  record: RecordCounts | null;
+  feedback: Pick<Feedback, 'key' | 'score' | 'value'>[];
+  /** When the list was searched: where the phrase was found outside the session's name, and the row it was found in, if one. */
+  match?: { snippet: string; rowId: string | null };
 }
+
+/**
+ * GET /api/fleet/history?ids=<id>&ids=<id>… (SessionView.id, the key once per id), what a linked comparison reads back:
+ * `{ sessions: HistoryRow[] }`, the sessions named that have ended, as a page of History lists them (`match` absent), in the order
+ * named and each once; one unknown, not ended, deleted, hidden from History's list or not of sessionKey's shape is left out. The
+ * range, paging, grouping and every filter word are ignored. At most this many ids; more is a 400.
+ */
+export const HISTORY_IDS = 20;
 
 // ---- Validation: strings are clamped, lists over their limit rejected --------
 
@@ -1201,6 +1506,12 @@ export const LIMITS = {
   activityDetail: 20_100,
   /** Characters of commands over the whole report, apart from `activityChars`. */
   activityDetailChars: 200_000,
+  /** The record: rows a report, characters of one kept text (20,000 plus room for the cut-off marker), and of kept text over a whole report. */
+  rows: 100,
+  rowText: 20_100,
+  rowTextChars: 120_000,
+  /** Feedback: a tag, a value, a comment; and the reason an issue is closed with. */
+  feedbackComment: 2000,
 } as const;
 
 /** The characters a respond limit leaves over for the reporter's own "[cut off at N characters]" marker. */
@@ -1370,6 +1681,7 @@ function gitInfo(v: unknown, at: string): GitInfo | null {
     ahead: f('ahead', count),
     behind: f('behind', count),
     dirty: f('dirty', count),
+    commit: f('commit', lineOrNull, LIMITS.short),
   };
 }
 
@@ -1505,6 +1817,28 @@ function eventOf(v: unknown, at: string): ActivityEvent {
     data = { ...data, category: line(data.category, `${at}.data.category`, LIMITS.short) };
   }
   return { id: f('id', line, LIMITS.id), t: f('t', finite), kind, agentId: f('agentId', lineOrNull, LIMITS.id), text: f('text', line, LIMITS.text), data };
+}
+
+/** A hash as lower-case hex digits of one length, or null. */
+function hexOrNull(v: unknown, at: string, length: number): string | null {
+  if (absent(v)) return null;
+  if (typeof v !== 'string' || v.length !== length || !/^[0-9a-f]+$/.test(v)) throw new Invalid(at, `expected ${String(length)} hex digits`);
+  return v;
+}
+
+/** One row of the record, with the fields of its kind and no others; a text part that is empty is left out. */
+function rowOf(v: unknown, at: string): TraceRow {
+  const [o, f] = fieldsOf(v, at);
+  const kind = f('kind', pick, ROW_KINDS);
+  const row: TraceRow = { id: f('id', line, LIMITS.id), kind, agentId: f('agentId', lineOrNull, LIMITS.id), t0: f('t0', finite), t1: f('t1', finiteOrNull) };
+  if (kind === 'turn') row.end = f('end', pickOrNull, TURN_ENDS);
+  else if (kind === 'request') Object.assign(row, { model: f('model', lineOrNull, LIMITS.short), effort: f('effort', lineOrNull, LIMITS.short), tokens: absent(o.tokens) ? null : f('tokens', tokenCounts), stop: f('stop', lineOrNull, LIMITS.short) });
+  else if (kind === 'tool') Object.assign(row, { tool: f('tool', line, LIMITS.short), outcome: f('outcome', pickOrNull, TOOL_OUTCOMES), exit: f('exit', finiteOrNull), callHash: f('callHash', hexOrNull, 8), errorHash: f('errorHash', hexOrNull, 64) });
+  else row.count = f('count', count);
+  if (absent(o.text)) return row;
+  const [parts, g] = f('text', fieldsOf);
+  const kept = TEXT_PARTS.flatMap((part) => (absent(parts[part]) || parts[part] === '' ? [] : [[part, g(part, text, LIMITS.rowText)] as const]));
+  return kept.length > 0 ? { ...row, text: Object.fromEntries(kept) } : row;
 }
 
 function loopOf(v: unknown, at: string): LoopReport | null {
@@ -1726,6 +2060,7 @@ export const validateReport = (body: unknown): ValidateResult =>
       events: f('events', list, LIMITS.events).map((e, i) => eventOf(e, `$.events[${String(i)}]`)),
       machine: f('machine', machineOf),
     };
+    if (!absent(o.rows)) report.rows = f('rows', list, LIMITS.rows).map((r, i) => rowOf(r, `$.rows[${String(i)}]`));
     // A dev build's commit and the Codex daemon's version, each only when sent and readable.
     const build = buildOf(r.build);
     const daemonVersion = g('daemonVersion', lineOrNull, LIMITS.short);

@@ -1,5 +1,5 @@
 // The hash routes, one per view: `#/` the Fleet (route `now`), `#/s/<id>` a session's page (`?agent=<agentId>` opens
-// one of its agents), `#/history`, `#/plans`, `#/machines` (`?add` opens Add a machine) and `#/settings`. Older addresses keep
+// one of its agents, `?step=<row id>` its Turns at that row), `#/history`, `#/plans`, `#/machines` (`?add` opens Add a machine) and `#/settings`. Older addresses keep
 // working: `#/wall`, `#/map` and `#/graph` open the Fleet in that layout, `#/board` Plans, `#/usage` the Fleet (where the state bar opens usage), and
 // `#/?open=<id>` a session's page.
 export type Route = "now" | "session" | "history" | "plans" | "machines" | "settings";
@@ -59,6 +59,11 @@ export function agentIn(hash: string): string | null {
   return routeFor(hash) === "session" ? parts(hash)[1].get("agent") : null;
 }
 
+/** The row a session's address opens its Turns at (`#/s/<id>?step=<row id>`); null when it names none. */
+export function stepIn(hash: string): string | null {
+  return routeFor(hash) === "session" ? parts(hash)[1].get("step") : null;
+}
+
 /** Machines with Add a machine open: the sidebar's "+". */
 export const ADD_MACHINE_HASH = "#/machines?add";
 
@@ -73,3 +78,6 @@ export function hashFor(route: Route, sessionId?: string, agentId?: string | nul
   const agent = agentId ? `?agent=${encodeURIComponent(agentId)}` : "";
   return `#/s/${encodeURIComponent(sessionId ?? "")}${agent}`;
 }
+
+/** A session's page opened on its Turns at one row: where an issue's occurrence and a search match lead. */
+export const stepHash = (sessionId: string, rowId: string): string => `${hashFor("session", sessionId)}?step=${encodeURIComponent(rowId)}`;

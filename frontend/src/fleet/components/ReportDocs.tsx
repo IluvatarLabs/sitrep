@@ -6,15 +6,15 @@ import { fmtCount } from "../format";
 import type { AgentView, SessionView } from "../types";
 import { dotsText } from "../ui/Dots";
 import { Panel } from "../ui/Panel";
-import { getJson } from "../views/settings/api";
+import { getJson, needsSignIn } from "../views/settings/api";
 import "../views/session/session.css";
 import { Markdown } from "./Markdown";
 import { useCopy } from "./SessionId";
 
 type Doc = "prompt" | "answer";
 type Texts = Record<Doc, string | null>;
-/** Where the whole text stands: not asked for, on its way, read, or not read. */
-type Whole = { at: "none" } | { at: "loading" } | { at: "read"; texts: Texts } | { at: "failed" };
+/** Where the whole text stands: not asked for, on its way, read, not read, or refused to a browser not signed in. */
+type Whole = { at: "none" } | { at: "loading" } | { at: "read"; texts: Texts } | { at: "failed" } | { at: "sign-in" };
 
 const DOC_TITLE: Readonly<Record<Doc, string>> = { prompt: "Prompt", answer: "Result" };
 
@@ -52,7 +52,8 @@ function DocPanel({ doc, a, whole, onClose }: { doc: Doc; a: AgentView; whole: W
   const text = read ?? short;
   const { state, copy } = useCopy(text);
   let note: string | null = null;
-  if (whole.at === "failed") note = "The whole text could not be read; this is its first 400 characters.";
+  if (whole.at === "sign-in") note = "Sign in to read the full text";
+  else if (whole.at === "failed") note = "The whole text could not be read; this is its first 400 characters.";
   else if (read === null && whole.at !== "loading" && short) note = "First 400 characters; the reporter's fullPrompts option sends the whole text.";
   let body: ReactNode;
   if (whole.at === "loading") body = <p className="sv-muted">Loading…</p>;
@@ -96,7 +97,7 @@ function useWholeText(s: SessionView, a: AgentView) {
         (texts) => settle({ at: "read", texts }),
         // A refusal by the view gate is not "could not be read": the console shows the sign-in screen in its place.
         (err: unknown) => {
-          if (!(err instanceof Error && err.message === VIEW_GATED)) settle({ at: "failed" });
+          if (!(err instanceof Error && err.message === VIEW_GATED)) settle({ at: needsSignIn(err) ? "sign-in" : "failed" });
         },
       );
     },

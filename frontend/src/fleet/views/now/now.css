@@ -196,9 +196,14 @@
   font: 600 var(--t-clock) / var(--lh-clock) var(--font-mono);
   white-space: nowrap;
 }
+/* Who asks and what keep their width before who claimed the session does: on a short line the claim gives way first, its name
+   ending in "…" (lines.css .claimed), weighted a million times who asks and what, as lines.css weighs a line's parts. */
 .nw-l1 > .ui-dots {
-  flex: 1;
+  flex: 1 1 auto;
   color: var(--muted);
+}
+.nw-l1 > .claimed {
+  flex-shrink: 1e6;
 }
 .nw-l2 {
   display: grid;
@@ -275,12 +280,13 @@
 }
 
 /* ---- the List: a row in two lines, each held to its height. Columns: the fold, the mark, the name, the model, Context,
-   Est. cost, Time, the pin (useResizable's MIN_MAIN is measured from these). ------------------------------------------- */
+   Est. cost, Time, the pin (useResizable's MIN_MAIN is measured from these). The model's 192 px holds the widest chip whole
+   ("GPT-6 Luna minimal", 191 px in WebKit). ------------------------------------------------------------------------------ */
 
 .lr-head,
 .lr-line {
   display: grid;
-  grid-template-columns: 24px 16px minmax(0, 1fr) 168px 72px 72px 64px 24px;
+  grid-template-columns: 24px 16px minmax(0, 1fr) 192px 72px 72px 64px 24px;
   column-gap: var(--s2);
 }
 .lr-line {

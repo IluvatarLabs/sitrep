@@ -10,6 +10,7 @@
 import { useMemo, useRef, useState } from "react";
 import { hashFor } from "../../../route";
 import { BlowBadge, ContextFigure, Cost, SurfaceChip } from "../../components/Chips";
+import { Claimed } from "../../components/Claim";
 import { PlanSteps } from "../../components/PlanPanel";
 import { SessionIdCopy } from "../../components/SessionId";
 import { Squares } from "../../components/Squares";
@@ -114,6 +115,7 @@ function Row({ s, all, now, open, onOpen, showEnded, onShowEnded, pinned, onPin,
               {brief}
             </span>
           )}
+          <Claimed claim={s.claim} />
           <SessionIdCopy id={s.nativeId} />
         </span>
         <span className="lr-crew">{s.agents.length > 0 ? <Squares s={s} cap={ROW_SQUARES} words={false} /> : null}</span>

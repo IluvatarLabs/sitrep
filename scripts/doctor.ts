@@ -100,7 +100,10 @@ async function main(): Promise<number> {
   const serverHere = fs.existsSync(SERVER_ENV);
   const claudeVersion = versionOf(run('claude', ['--version']));
   const codexVersion = versionOf(run('codex', ['--version']));
-  const codexHere = codexVersion !== null || fs.existsSync(REPORTER_ENV);
+  // codex-reporter is installed here when its service is. Codex alone on a machine is not a reporter left half done: a server
+  // machine may have Codex and report nothing, and an uninstall keeps the config.
+  const reporterHere = PLATFORM ? fs.existsSync(serviceFile(CODEX_REPORTER)) : fs.existsSync(REPORTER_ENV);
+  const codexHere = codexVersion !== null || reporterHere;
   // How a reporter here is (re)installed: on the server machine it finds the server and its secret itself.
   const install = (flag: string): string => (serverHere ? `npx tsx scripts/install.ts ${flag} --apply` : `npx tsx scripts/install.ts ${flag} --url <server URL> --token-stdin --apply (README: Add a machine)`);
   /**
@@ -121,7 +124,7 @@ async function main(): Promise<number> {
   else bad('Dependencies not installed', 'npm ci');
   const builds = [
     ...(serverHere ? [{ what: 'server', file: SERVER.entry, cmd: 'npm run build' }, { what: 'dashboard', file: path.join(REPO_ROOT, 'frontend', 'dist', 'index.html'), cmd: 'npm run build' }] : []),
-    ...(codexHere ? [{ what: 'codex-reporter', file: CODEX_REPORTER.entry, cmd: 'npm run build -w codex-reporter' }] : []),
+    ...(reporterHere ? [{ what: 'codex-reporter', file: CODEX_REPORTER.entry, cmd: 'npm run build -w codex-reporter' }] : []),
   ];
   const unbuilt = builds.filter((b) => !fs.existsSync(b.file));
   if (unbuilt.length) bad(`Not built: ${unbuilt.map((b) => b.what).join(', ')}`, [...new Set(unbuilt.map((b) => b.cmd))].join(' && '));
@@ -133,7 +136,7 @@ async function main(): Promise<number> {
     const id = claudeMarket().plugin;
     const list = json<unknown>(run('claude', ['plugin', 'list', '--json']));
     const entry = (Array.isArray(list) ? (list as { id?: unknown; enabled?: unknown; errors?: unknown }[]) : []).find((p) => p.id === id);
-    if (!entry) bad(`Claude plugin ${id} not installed`, install('--claude'));
+    if (!entry) skip(`Claude Code ${claudeVersion} reports nothing from here: the plugin ${id} is not installed (${install('--claude')})`);
     else if (entry.enabled !== true) bad(`Claude plugin ${id} disabled`, `claude plugin enable ${id}`);
     else if (Array.isArray(entry.errors) && entry.errors.length) bad(`Claude plugin ${id} failed to load: ${String(entry.errors[0])}`, install('--claude'));
     else {
@@ -152,6 +155,7 @@ async function main(): Promise<number> {
 
   // Codex.
   if (!codexHere) skip('Codex not found');
+  else if (!reporterHere) skip(`Codex ${codexVersion ?? ''} reports nothing from here: codex-reporter is not installed (${install('--codex')})`);
   else if (codexVersion === null) bad('codex not found on this PATH, but codex-reporter is set up', 'put codex on the PATH, then npx tsx scripts/install.ts --codex --apply');
   else {
     const id = codexMarket().plugin;

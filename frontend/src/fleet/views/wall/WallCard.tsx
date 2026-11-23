@@ -21,6 +21,7 @@
 import type { MouseEvent } from "react";
 import { hashFor } from "../../../route";
 import { BlowBadge, ContextBar, ContextFigure, Cost, GitLine, PlanBar, SurfaceChip } from "../../components/Chips";
+import { Claimed } from "../../components/Claim";
 import { SessionIdCopy } from "../../components/SessionId";
 import { Sparkline } from "../../components/Sparkline";
 import { Squares } from "../../components/Squares";
@@ -136,6 +137,7 @@ export function WallCard({ s, now, machine, pinned, onPin }: { s: SessionView; n
             {plan}
           </>
         )}
+        <Claimed claim={s.claim} />
         {state === "needs-you" ? <CardAnswer s={s} /> : null}
       </div>
       {detailed ? (

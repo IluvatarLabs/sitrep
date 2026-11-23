@@ -1,6 +1,6 @@
 // A report becomes rows: the session, its agents and their texts, new events, blowouts, this second's sample and what it spent,
 // all in one transaction. So does a batch of Claude Code's API requests, Claude's only source of usage.
-import type { ActivityEvent, AgentReport, ContextFill, ModelUsage, Plan, PlanStepView, PlanView, Report, SessionReport } from './protocol.js';
+import type { ActivityEvent, AgentReport, ContextFill, ModelUsage, Plan, PlanStepView, PlanView, Report, SessionReport, TraceRow } from './protocol.js';
 import { sessionKey, type AgentRow, type EventRow, type FleetDb, type ReportedSession, type SessionRow } from './db.js';
 import { costParts, fromJson, spendShares, tokenSum, unpricedRises, usageTotals } from './derive.js';
 import { localDay } from './days.js';
@@ -21,6 +21,8 @@ export interface IngestResult {
   ended: boolean;
   /** The events stored now; an id stored before is skipped. */
   newEvents: EventRow[];
+  /** The record's rows stored for the first time now, in the report's order. */
+  newRows: TraceRow[];
   /** The report's sentAt less the server's time: for debugging, and to place activity entries against a lease. */
   clockSkewMs: number;
 }
@@ -225,6 +227,32 @@ function storeEvents(f: FleetDb, sessionId: string, events: readonly ActivityEve
 }
 
 /**
+ * Stores the report's rows of the record, each under its id with its kept text, and moves the session's counts once:
+ * a row counts when it is first stored, a call's outcome as known when a store first gives one, and as failed when a store first
+ * says so (a Codex call learns its outcome on a second send). Rows that change nothing write nothing and move nothing. Returns
+ * the rows stored for the first time.
+ */
+function storeRows(f: FleetDb, sessionId: string, rows: readonly TraceRow[]): TraceRow[] {
+  if (rows.length === 0) return [];
+  const add = { turns: 0, requests: 0, tools: 0, known: 0, failed: 0 };
+  const fresh: TraceRow[] = [];
+  let seq: number | null = null;
+  for (const r of rows) {
+    const stored = f.putRow(sessionId, r);
+    if (stored.written) seq = stored.seq;
+    if (stored.knownNow) add.known++;
+    if (stored.failedNow) add.failed++;
+    if (!stored.isNew) continue;
+    fresh.push(r);
+    if (r.kind === 'turn') add.turns++;
+    else if (r.kind === 'request') add.requests++;
+    else if (r.kind === 'tool') add.tools++;
+  }
+  if (seq !== null) f.addRecord(sessionId, add, seq);
+  return fresh;
+}
+
+/**
  * Upserts each agent the report lists, with its usage as `usageOf` gives it and any full text it sent; one it leaves out stays, as a
  * reload can lose an agent. A report that ends the session (`endedNow`, the server's time then) aborts every agent still running
  * or queued.
@@ -300,9 +328,9 @@ function recordSpend(f: FleetDb, pricing: Pricing | undefined, row: ReportedSess
 /**
  * Stores one validated report under its session's id on the server (sessionKey). `serverTime`, never the reporter's clock, sets
  * last_seen_at. `owner` is `Admin` when the report carried the admin secret; null (no secret configured) leaves a stored owner as
- * it was. `pricing` prices the spend it records.
+ * it was. `pricing` prices the spend it records. With `keepRows` off (the server's `trace` setting) the report's rows are not stored.
  */
-export function ingestReport(f: FleetDb, report: Report, serverTime: number, owner: string | null = null, pricing?: Pricing): IngestResult {
+export function ingestReport(f: FleetDb, report: Report, serverTime: number, owner: string | null = null, pricing?: Pricing, keepRows = true): IngestResult {
   return f.tx(() => {
     const sid = sessionKey(report.session.id, report.machine.id);
     const prev = f.getSession(sid);
@@ -317,6 +345,7 @@ export function ingestReport(f: FleetDb, report: Report, serverTime: number, own
     f.upsertSession(row);
     storeAgents(f, sid, report.agents, (a) => (fromTelemetry ? sums(a.id) : a.usageByModel), ended ? serverTime : null);
     storeBlowouts(f, sid, newEvents);
+    const newRows = keepRows ? storeRows(f, sid, report.rows ?? []) : [];
     // This second's sample, while the session's usage is known. A Claude report books nothing, its requests book their own spend;
     // any other report that carries usage books its rise. A report without usage leaves the figure unknown in it: it books nothing,
     // moves no mark and takes no sample; the sweep carries the last sample on (Fleet.carrySample).
@@ -330,6 +359,7 @@ export function ingestReport(f: FleetDb, report: Report, serverTime: number, own
       wasDone: prev?.status === 'done',
       ended,
       newEvents,
+      newRows,
       clockSkewMs: report.sentAt - serverTime,
     };
   });

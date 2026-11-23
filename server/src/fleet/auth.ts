@@ -29,9 +29,6 @@ export function identify(secret: string | null, given: unknown): Identity | { re
 
 export const ownerOf = (id: Identity): string | null => (id.kind === 'admin' ? ADMIN_OWNER : null);
 
-/** A name made comparable: trimmed, lower-cased, each run of spaces as one. */
-export const nameKey = (name: string): string => name.trim().toLowerCase().replace(/ +/g, ' ');
-
 /** A request's source address, an IPv4 one without its `::ffff:` mapping prefix. */
 export const sourceAddress = (ip: string | undefined): string => ip?.replace(/^::ffff:/, '') ?? 'unknown';
 

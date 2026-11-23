@@ -635,6 +635,8 @@ export interface CodexAppServer {
 }
 
 const RPC_TIMEOUT_MS = 30_000;
+/** Codex was reached and did not answer in time. */
+class NoAnswer extends Error {}
 
 class Rpc implements CodexAppServer {
   private seq = 0;
@@ -647,7 +649,7 @@ class Rpc implements CodexAppServer {
     if (this.gone) return Promise.reject(this.gone);
     const id = ++this.seq;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => this.settle(id, new Error(`${method} got no answer in ${String(RPC_TIMEOUT_MS / 1000)} s`)), RPC_TIMEOUT_MS);
+      const timer = setTimeout(() => this.settle(id, new NoAnswer(`${method} got no answer in ${String(RPC_TIMEOUT_MS / 1000)} s`)), RPC_TIMEOUT_MS);
       this.pending.set(id, {
         resolve: (v) => {
           clearTimeout(timer);
@@ -727,17 +729,23 @@ function overStdio(): Rpc {
   return rpc;
 }
 
-/** An initialized connection, named as Codex's own passive daemon probe is, which leaves the daemon's identity alone. */
+/**
+ * An initialized connection, named as Codex's own passive daemon probe is, which leaves the daemon's identity alone. Codex's
+ * first start in a home can outlast the wait, and the start after it answers at once, so no answer is tried once more.
+ */
 export async function openCodexAppServer(): Promise<CodexAppServer> {
-  const socket = daemonSocket();
-  const rpc = socket ? await overSocket(socket) : overStdio();
-  try {
-    await rpc.call('initialize', { clientInfo: { name: 'codex_app_server_daemon', title: 'SITREP install', version: release.version }, capabilities: null });
-    rpc.notify('initialized');
-    return rpc;
-  } catch (err) {
-    rpc.close();
-    throw err;
+  for (let attempt = 1; ; attempt++) {
+    const socket = daemonSocket();
+    const rpc = socket ? await overSocket(socket) : overStdio();
+    try {
+      await rpc.call('initialize', { clientInfo: { name: 'codex_app_server_daemon', title: 'SITREP install', version: release.version }, capabilities: null });
+      rpc.notify('initialized');
+      return rpc;
+    } catch (err) {
+      rpc.close();
+      if (attempt === 2 || !(err instanceof NoAnswer)) throw err;
+      console.log('    Codex did not answer; trying once more');
+    }
   }
 }
 

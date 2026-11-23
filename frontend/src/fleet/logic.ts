@@ -1,9 +1,9 @@
 // The console's arithmetic, pure: the Fleet's filters and sorts, plans, agent counts and the agent tree, totals and times,
 // model names, and one effort order for both harnesses.
-import { MAIN_LOOP } from "../../../server/src/fleet/protocol";
+import { familyName, MAIN_LOOP, modelIdName, modelVersion } from "../../../server/src/fleet/protocol";
 import { plural } from "./format";
 import { isHeadless, stateOf, STATE_WORD } from "./states";
-import type { AgentView, ModelFamily, Plan, PlanStep, PlanStepView, PlanView, SessionView } from "./types";
+import type { AgentView, Plan, PlanStep, PlanStepView, PlanView, SessionView } from "./types";
 
 /** The main loop's row in the agent tree: the key the server gives it. */
 export { MAIN_LOOP as ORCHESTRATOR_ROW };
@@ -270,42 +270,9 @@ export function effortRank(effort: string | null): number {
   return at < 0 ? EFFORT_ORDER.length : at;
 }
 
-const CLAUDE: ReadonlySet<ModelFamily> = new Set(["opus", "sonnet", "haiku", "fable"]);
-
-/**
- * The version in a Claude model id: 5.5 for claude-sonnet-5-5, 4 for claude-opus-4-20250514, 3.5 for claude-3-5-sonnet-20241022;
- * null for an alias or another maker's id. A version part is one or two digits, so a date is never one.
- */
-const VERSION_AFTER = /(?:opus|sonnet|haiku|fable)-(\d{1,2}(?:-\d{1,2})?)(?!\d)/;
-const VERSION_BEFORE = /claude-(\d{1,2}(?:-\d{1,2})?)-(?:opus|sonnet|haiku|fable)/;
-
-export function modelVersion(id: string | null): string | null {
-  const lower = id?.toLowerCase() ?? "";
-  if (!lower.includes("claude")) return null;
-  return (VERSION_AFTER.exec(lower) ?? VERSION_BEFORE.exec(lower))?.[1]?.replace("-", ".") ?? null;
-}
-
-/**
- * Codex's own name for a model id (codex-rs/tui/src/status/thread_usage.rs:265-297 and model_catalog's one alias):
- * "gpt-6-astra" is "GPT-6 Astra", "gpt-5-mini" "GPT-5 Mini", "gpt-5.4" "GPT-5.4"; an id that is not GPT stays as it is.
- */
-function codexName(id: string): string {
-  if (id.toLowerCase() === "gpt-reserve") return "Luna Reserve";
-  const cut = id.indexOf("-");
-  if (cut < 0 || cut === id.length - 1 || id.slice(0, cut).toLowerCase() !== "gpt") return id;
-  const [first = "", ...rest] = id.slice(cut + 1).split("-");
-  const join = /^\d/.test(first) ? " " : "-";
-  const word = (w: string) => (w.toLowerCase() === "oai" ? "OAI" : w.charAt(0).toUpperCase() + w.slice(1));
-  return `GPT-${first}${rest.map((w) => join + word(w)).join("")}`;
-}
-
-/** A model as its harness names it: a Claude family and its version ("Sonnet 5.5"), any other id by Codex's rule. */
-export function familyName(family: ModelFamily, id: string | null): string {
-  if (!CLAUDE.has(family)) return id === null ? (family === "openai" ? "OpenAI" : "unknown") : codexName(id);
-  const version = modelVersion(id);
-  const name = family.charAt(0).toUpperCase() + family.slice(1);
-  return version ? `${name} ${version}` : name;
-}
+// A model's name (familyName, modelIdName, modelVersion) is the contract's rule (protocol.ts), so History's groups and the page
+// name a model alike.
+export { familyName, modelIdName, modelVersion };
 
 // ---- the agent table's sorts ----------------------------------------------------------------------------------------------
 

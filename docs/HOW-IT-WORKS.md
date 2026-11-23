@@ -69,13 +69,20 @@ is marked "est.". Plan windows show each provider's limits as the harness report
 ## What is stored
 
 Everything lives in one SQLite database on the server (`~/.sitrep/data/`): sessions, their agents, plans and events,
-and usage. History is kept for as long as the retention settings say.
+usage, and the record: a row for each turn, model request and tool call, with your feedback, what you did to each
+issue, and the name each sign-in gave. History and the record are kept for as long as the retention settings say.
 
-No transcripts are stored. The free text a report carries (a prompt's opening, a command, a failed tool's output) is
-redacted on the machine it comes from and cut to a fixed length.
+By default no transcript is stored. The free text a report carries (a prompt's opening, a command, a failed tool's
+output) is redacted on the machine it comes from and cut to a fixed length, and the record's rows carry no text.
 
-While the server cannot be reached, a reporter keeps each session's latest state and up to 500 events, and sends them
-when it is back.
+Two options keep more, each set on a machine and off by default. Full capture keeps the record's text: prompts, the
+model's messages and visible reasoning, tool input and output, and each agent's whole prompt and answer. `fullPrompts`
+keeps those agents' texts alone. Both are redacted on the machine by pattern, cut at 20,000 characters, and shown only to a signed-in browser;
+a server with no admin secret has no sign-in and shows them to anyone who can reach it.
+[The record](OPERATIONS.md#the-record) says what each level sends and who can read it.
+
+While the server cannot be reached, a reporter keeps each session's latest state, up to 500 events and up to 500 of the
+record's rows, and sends them when it is back.
 
 ## Security
 
@@ -84,7 +91,7 @@ SITREP is built for one person on a trusted LAN.
 - It speaks plain HTTP. By default anyone who can reach port 7487 can read every session; Settings → Require sign-in to
   view closes that.
 - One admin secret does everything else: the reporters send it with their reports, and you sign in with it to answer a
-  session or change a setting.
+  session, change a setting, leave feedback, claim or close an issue, export, and read kept text.
 - From outside the LAN, reach it through an SSH tunnel.
 
 [Operations: Security](OPERATIONS.md#security-one-owner-one-secret) has the detail and the ways to narrow it.

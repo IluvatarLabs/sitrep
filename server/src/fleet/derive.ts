@@ -5,6 +5,7 @@ import { checkReporter, supportFor } from './compat.js';
 import { erroredState, isStuck, type StuckThresholds } from './alerts.js';
 import type { Pricing } from './pricing.js';
 import {
+  family,
   reporterOf,
   type ActivityView,
   type AgentView,
@@ -22,11 +23,11 @@ import {
   type MachineInfo,
   type MachineSpend,
   type MessageView,
-  type ModelFamily,
   type ModelUsage,
   type PlanView,
   type ProviderName,
   type RateLimit,
+  type RecordCounts,
   type RespondInfo,
   type SessionStatusView,
   type SessionView,
@@ -50,26 +51,6 @@ export function usageTotals(row: Pick<SessionRow, 'usage_json'>): TokenCounts | 
   const sum = (of: (t: UsageTokens) => number): number => usage.reduce((n, u) => n + of(u.tokens), 0);
   return { input: sum((t) => t.input), output: sum((t) => t.output), cacheRead: sum((t) => t.cacheRead), cacheWrite: sum((t) => t.cacheWrite + t.cacheWrite1h) };
 }
-
-/** GPT, ChatGPT and Codex ids, and the o-series. */
-const OPENAI_ID = /^(gpt|chatgpt|codex)([-._:\d]|$)|^o\d/;
-/** A bare Claude alias, bracketed suffix allowed (`opus[1m]`). */
-const CLAUDE_ALIAS = /^(opus|sonnet|haiku|fable|opusplan)(\[[^\]]*\])?$/;
-
-/** The Claude families a model id can name, tried in this order. */
-const CLAUDE_FAMILIES = ['opus', 'sonnet', 'haiku', 'fable'] as const;
-
-/**
- * The family a model belongs to, read from its id in any case: `openai` for the GPT, ChatGPT, Codex and o-series
- * models Codex runs; a Claude family for a bare Claude Code alias or an id that names Claude; `other` for everything else, so a
- * model whose id merely contains a family's word is not taken for Claude.
- */
-export const family = (model: string | null | undefined): ModelFamily => {
-  const id = model?.toLowerCase() ?? '';
-  if (OPENAI_ID.test(id)) return 'openai';
-  const claude = id.includes('claude') || CLAUDE_ALIAS.test(id);
-  return (claude && CLAUDE_FAMILIES.find((name) => id.includes(name))) || 'other';
-};
 
 /**
  * How bad a card's blowouts are: 0 with none; 2, "likely losing context", once there are 3 or more in all or one loop (the main
@@ -368,6 +349,10 @@ function agentViews(input: SessionInput, provider: ProviderName, status: Session
   });
 }
 
+/** A session's record in figures; null while no row of it is stored. */
+export const recordOf = (row: Pick<SessionRow, 'rec_turns' | 'rec_requests' | 'rec_tools' | 'rec_known' | 'rec_failed' | 'rec_seq'>): RecordCounts | null =>
+  row.rec_seq === null ? null : { turns: row.rec_turns ?? 0, requests: row.rec_requests ?? 0, toolCalls: row.rec_tools ?? 0, knownCalls: row.rec_known ?? 0, failedCalls: row.rec_failed ?? 0, seq: row.rec_seq };
+
 /** The reported wait reasons the views carry; anything else reads as none. */
 const WAIT_REASONS: readonly NonNullable<SessionView['waitReason']>[] = ['permission', 'input', 'idle'];
 
@@ -440,6 +425,9 @@ export function sessionView(input: SessionInput, now: number, { home, stuck: thr
     agents: agentViews(input, provider, status, now, thresholds),
     collisions: input.collisions,
     messages: input.messages,
+    record: recordOf(row),
+    // The fleet holds claims; it sets one that still stands (Fleet.viewOf).
+    claim: null,
     // The feed and answering, as the reporter last said and the respond store holds them.
     activityFeed: input.activityFeed,
     respond: input.respond,

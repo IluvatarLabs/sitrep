@@ -5,13 +5,17 @@ import { readJson, writeJson } from "./storage";
 
 export type Panel = "rail" | "side";
 
-/** Each panel's narrowest and widest, and its width until one is chosen. */
-export const LIMITS: Readonly<Record<Panel, readonly [min: number, max: number]>> = { rail: [180, 440], side: [260, 700] };
+/**
+ * Each panel's narrowest and widest, and its width until one is chosen. The sidebar's narrowest is what its tightest row needs to
+ * show a cut name whole: a nested session with a compaction badge keeps the name's last eight characters and room for a letter
+ * and "…" before them (measured in WebKit: 236 px).
+ */
+export const LIMITS: Readonly<Record<Panel, readonly [min: number, max: number]>> = { rail: [240, 440], side: [260, 700] };
 export const DEFAULT_WIDTH: Readonly<Record<Panel, number>> = { rail: 252, side: 300 };
 
 /**
  * The main column's least width, from its widest row: the List's fixed columns (fold, mark, model, context, cost, time, pin and
- * their gaps, 496 px), its 48 px of padding, and a 176 px floor for the name. The inspector still opens to its 700 px at 1920.
+ * their gaps, 520 px), its 48 px of padding, and a 152 px floor for the name. The inspector still opens to its 700 px at 1920.
  */
 const MIN_MAIN = 720;
 const STEP = { small: 16, large: 48 };

@@ -12,6 +12,7 @@ import { BOARD_COLUMNS, buildBoard, CARDS_PER_PAGE, EMPTY_COLUMN, planFigures, t
 import { stateOf } from "../states";
 import { readJson, writeJson } from "../storage";
 import type { Kpis, SessionView } from "../types";
+import { MidCut } from "../ui/MidCut";
 import { Station, stationColor, stationWord } from "../ui/Station";
 import { Unknown } from "../ui/Unknown";
 import { IconChevron } from "./Icons";
@@ -32,12 +33,17 @@ function stepsWord(n: number): string {
   return n === 1 ? "1 step" : `${n} steps`;
 }
 
-/** A session's name with its state's mark: a card's title, or the head of a lane. */
+/**
+ * A session's name with its state's mark: a card's title, or the head of a lane. The name is cut in the middle (ui/MidCut), so
+ * sessions whose names differ only at their end stay apart on the board.
+ */
 function NameTag({ cls, s, size }: { cls: string; s: SessionView; size: number }) {
   return (
     <div className={cls}>
       <Station kind={stateOf(s)} label size={size} />
-      <b>{s.name}</b>
+      <b>
+        <MidCut text={s.name} />
+      </b>
     </div>
   );
 }

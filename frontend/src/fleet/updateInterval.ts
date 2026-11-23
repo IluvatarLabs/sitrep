@@ -21,13 +21,14 @@ export const writeRedraw = (seconds: number): void => writeJson(STORE_KEY, secon
  * Whether a session's change can't wait for the interval, against `was`, the session as shown (undefined when it was not): it
  * starts waiting, or ends (so its Done view always shows through its hold, and the page and its pins see the end); gains or
  * loses an open ask, so the needs-you queue and every count follow at once, as the live top bar does; starts or stops needing its
- * person (also with no change of status: idle on background work and waiting on its person are both "waiting"); gets stuck or
- * errors; or an agent of it newly failed or got stuck.
+ * person (also with no change of status: idle on background work and waiting on its person are both "waiting"); is claimed or
+ * its claim ends, so everyone sees who is handling it at once; gets stuck or errors; or an agent of it newly failed or got stuck.
  */
 function urgentFor(s: SessionView, was: SessionView | undefined): boolean {
   if (s.status !== was?.status && (s.status === "waiting" || s.status === "done")) return true;
   if (liveOpenAsk(s) !== (was !== undefined && liveOpenAsk(was))) return true;
   if (was && needsYou(was) !== needsYou(s)) return true;
+  if (s.claim?.by !== was?.claim?.by) return true;
   if ((s.stuck && !was?.stuck) || (s.errored !== null && !was?.errored)) return true;
   const failedBefore = new Set(was?.agents.filter((a) => a.failure).map((a) => a.id));
   const stuckBefore = new Set(was?.agents.filter((a) => a.stuck).map((a) => a.id));

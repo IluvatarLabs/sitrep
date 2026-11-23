@@ -4,31 +4,37 @@
 // daemon; effort from the session file, then the daemon (hooks carry none). The daemon's values are snapshots it never
 // refreshes for a client that is not subscribed. Facts are timestamped by the event that carried them, so a source read late
 // never undoes a newer one. Unknown stays unknown.
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { ThreadStatus, Thread as CodexThread } from './codex-protocol/v2.js';
-import { clip, clipFreeText, LIMITS } from './report.js';
-import { threadOfFile, type AsyncQuestion, type ParsedLine, type RawWindow, type RolloutRecord, type SentMessage } from './sessionFiles.js';
+import { capture } from './config.js';
+import { clip, clipFreeText, joinRaw, LIMITS, type QueuedRow } from './report.js';
+import { threadOfFile, type AsyncQuestion, type ParsedLine, type RawUsage, type RawWindow, type RolloutRecord, type SentMessage } from './sessionFiles.js';
 import { JsonlTail } from './spool.js';
-import type {
-  ActivityEntry,
-  ActivityEvent,
-  AgentStatus,
-  ContextFill,
-  Failure,
-  FailureClass,
-  FilesReport,
-  GitInfo,
-  ModelUsage,
-  PlanStep,
-  RateLimit,
-  SessionReport,
-  UsageTokens,
+import {
+  errorKey,
+  type ActivityEntry,
+  type ActivityEvent,
+  type AgentStatus,
+  type ContextFill,
+  type Failure,
+  type FailureClass,
+  type FilesReport,
+  type GitInfo,
+  type ModelUsage,
+  type PlanStep,
+  type RateLimit,
+  type RowText,
+  type SessionReport,
+  type TokenCounts,
+  type UsageTokens,
 } from '../../server/src/fleet/protocol.js';
 
 /**
- * A thread without newer evidence than this, and not loaded in the daemon, is no longer reported: the time Codex
- * keeps an idle thread loaded, `thread_unload_delay_secs`, default 1800 (`config/src/config_toml.rs:352`,
- * `core/src/config/mod.rs:4071-4072` at rust-v0.164.0), so a thread no daemon reports stays as long as Codex keeps it.
+ * A thread without newer evidence than this, and not loaded in the daemon, is no longer reported. The figure is the time
+ * Codex kept an idle thread loaded when it was set: `thread_unload_delay_secs`, default 1800 at rust-v0.164.0
+ * (`config/src/config_toml.rs:352`, `core/src/config/mod.rs:4071-4072`). That default is 60 since rust-v0.167.0
+ * (`core/src/config/mod.rs:4145-4146`); the window is kept, as what holds an open thread that no daemon reports.
  */
 export const LIVE_WINDOW_MS = 30 * 60_000;
 /** A thread with no evidence for this long, not loaded, is forgotten. */
@@ -142,6 +148,7 @@ export interface Thread {
    * waiting call's tool; `ownStartSeen` says that call's own PreToolUse has been read (see toolStartEndsWait).
    */
   permission: { note: string; at: number; tool: string; ownStartSeen: boolean } | null;
+  /** Codex's end hook is the last this root said: no hook or session-file record after it. Whether its session is over is `hasEnded`. */
   ended: boolean;
   endedAt: number;
   /**
@@ -189,6 +196,15 @@ export interface Thread {
   /** The session-start (root) or spawn (child) event has been considered. */
   announced: boolean;
   endEventAt: number;
+  /**
+   * The record, read from its file: the running turn's row (a root's; null between turns), each call's row by call id
+   * (until its output and its `command` item are in; at most KEYS_KEPT), and at full capture the text the thread wrote since its
+   * last billed response, raw, for that response's row; and when that response's first call was recorded (null with none yet).
+   */
+  turnRow: QueuedRow | null;
+  calls: Map<string, QueuedRow>;
+  said: RowText;
+  responseAt: number | null;
 }
 
 export interface Session {
@@ -210,6 +226,8 @@ export interface Session {
   usageReady: boolean;
   /** The last report the server took carried no usage (not ready yet): the session stays reported until one with it is taken. */
   usagePending: boolean;
+  /** The record's rows queued since the transport last took them (drainRows). */
+  rows: QueuedRow[];
 }
 
 export interface SessionState {
@@ -246,6 +264,9 @@ export function rateLimit(slot: 'primary' | 'secondary', w: RawWindow, at: numbe
 function uncachedInput(input: number, cached: number, cacheWrite: number): number {
   return Math.max(0, input - cached - cacheWrite);
 }
+
+/** One response's tokens as the report counts them: input without its cached parts (uncachedInput), cache reads, output, cache writes. */
+const tokensOf = (u: RawUsage): TokenCounts => ({ input: uncachedInput(u.input, u.cached, u.cacheWrite), output: u.output, cacheRead: u.cached, cacheWrite: u.cacheWrite });
 
 /**
  * A `token_count` written by Codex's fill on a context-window-exceeded failure (`core/src/session/turn.rs:1824-1826` →
@@ -338,6 +359,10 @@ export class Fleet {
         asyncQuestions: new Map(),
         announced: false,
         endEventAt: 0,
+        turnRow: null,
+        calls: new Map(),
+        said: {},
+        responseAt: null,
       };
       this.threads.set(id, t);
       this.session(id);
@@ -348,7 +373,7 @@ export class Fleet {
   session(id: string): Session {
     let s = this.sessions.get(id);
     if (!s) {
-      s = { id, events: [], dirty: true, watched: [], git: null, files: null, gitBase: null, placeCwd: null, projectRoot: null, repoName: null, finalFor: 0, usageReady: false, usagePending: false };
+      s = { id, events: [], dirty: true, watched: [], git: null, files: null, gitBase: null, placeCwd: null, projectRoot: null, repoName: null, finalFor: 0, usageReady: false, usagePending: false, rows: [] };
       this.sessions.set(id, s);
     }
     return s;
@@ -372,7 +397,7 @@ export class Fleet {
         const own = this.sessions.get(t.id);
         if (own && !this.threadsOf(t.id).some((x) => x.id !== t.id)) {
           this.sessions.delete(t.id);
-          this.adopt(t, own.events);
+          this.adopt(t, own.events, own.rows);
         }
       }
       this.thread(sessionId);
@@ -385,12 +410,12 @@ export class Fleet {
   }
 
   /**
-   * The events a thread queued while it stood as its own root, appended in their order to the session it joined. Each becomes
-   * the agent's own (`agentId` the thread, the id under the new session), the id an event of that agent has when its root is
-   * known from the start.
+   * The events and rows a thread queued while it stood as its own root, appended in their order to the session it joined. Each
+   * becomes the agent's own (`agentId` the thread, the id under the new session), the id an event of that agent has when its root
+   * is known from the start; a turn row goes, as an agent sends none.
    */
-  private adopt(t: Thread, events: readonly ActivityEvent[]): void {
-    if (!events.length) return;
+  private adopt(t: Thread, events: readonly ActivityEvent[], rows: readonly QueuedRow[]): void {
+    if (!events.length && !rows.length) return;
     const s = this.sessionOf(t);
     for (const e of events) {
       const agentId = e.agentId ?? t.id;
@@ -398,6 +423,7 @@ export class Fleet {
       const rest = e.id.split(':').slice(2).join(':');
       s.events.push({ ...e, agentId, id: `${s.id}:${agentId}:${rest}` });
     }
+    for (const r of rows) if (r.kind !== 'turn') s.rows.push({ ...r, agentId: r.agentId ?? t.id });
     if (s.events.length > EVENTS_KEPT) s.events.splice(0, s.events.length - EVENTS_KEPT);
     s.dirty = true;
   }
@@ -438,6 +464,21 @@ export class Fleet {
     s.events.push({ id: `${s.id}:${agentId ?? 'main'}:${kind}:${at}:${key}`, t: at, kind, agentId, text: clip(text.replace(/\s+/g, ' ').trim(), LIMITS.text), data });
     if (s.events.length > EVENTS_KEPT) s.events.splice(0, s.events.length - EVENTS_KEPT);
     s.dirty = true;
+  }
+
+  /**
+   * Queues one row of the record for the thread's session, a child's under its own id (it sends no turn row); none at capture `off`.
+   * A row that ended outside the live window is history and is not queued, as event() treats an event.
+   */
+  private row(t: Thread, row: QueuedRow, now = Date.now()): void {
+    if (capture === 'off' || (row.kind === 'turn' && this.isChild(t)) || now - (row.t1 ?? row.t0) > LIVE_WINDOW_MS) return;
+    this.sessionOf(t).rows.push({ ...row, agentId: this.isChild(t) ? t.id : null });
+  }
+
+  /** A call's row kept by its id, the oldest forgotten past KEYS_KEPT. */
+  private keepCall(t: Thread, row: QueuedRow): void {
+    t.calls.set(row.id, row);
+    if (t.calls.size > KEYS_KEPT) t.calls.delete(t.calls.keys().next().value as string);
   }
 
   private loopLabel(t: Thread): string {
@@ -674,6 +715,11 @@ export class Fleet {
     if (t.rollout) t.files.delete(t.rollout.path);
     t.rollout = { path: file, tail: file.endsWith('.zst') ? null : new JsonlTail(file), metaSeen: false };
     t.fileLoop = newLoop();
+    // The record is read from the new file's start too; each row it sends again keeps its id, so the server replaces it.
+    t.turnRow = null;
+    t.calls = new Map();
+    t.said = {};
+    t.responseAt = null;
   }
 
   applyRollout(t: Thread, line: ParsedLine): void {
@@ -711,6 +757,12 @@ export class Fleet {
         t.turnId = r.turnId;
         if (r.contextWindow !== null) t.contextWindow = r.contextWindow;
         if (t.turnError && t.turnError.at <= at) t.turnError = null;
+        // A turn's row is sent as it starts, and again, under the same id, when it ends (turnEnded).
+        t.turnRow = r.turnId ? { id: r.turnId, kind: 'turn', agentId: null, t0: at, t1: null, end: null } : null;
+        if (t.turnRow) this.row(t, t.turnRow);
+        // Nothing of a response the last turn left unbilled (an interrupted one) belongs to this turn's first.
+        t.said = {};
+        t.responseAt = null;
         break;
       case 'turnEnded':
         this.turnEnded(t, r, at, key);
@@ -720,11 +772,38 @@ export class Fleet {
         break;
       case 'usage':
         this.addUsage(t, r, null);
+        // One row per billed response, with the model and effort its turn context set, and at full capture what the thread wrote
+        // for it: its items come before its usage record (Codex records each at OutputItemDone, the usage at Completed:
+        // core/src/session/turn.rs:3198-3321, 3528-3565). So the row stands where its first call was recorded, a few milliseconds
+        // before the usage record, and a request reads before the calls it made; with no call, at its usage record.
+        if (r.threadId !== t.id) break;
+        this.row(t, {
+          id: r.responseId,
+          kind: 'request',
+          agentId: null,
+          t0: t.responseAt ?? at,
+          t1: null,
+          model: t.model.file && clip(t.model.file, 120),
+          effort: t.effort.file && clip(t.effort.file, 120),
+          tokens: tokensOf(r.usage),
+          stop: null,
+          ...(t.said.message || t.said.thinking ? { raw: t.said } : {}),
+        });
+        t.said = {};
+        t.responseAt = null;
         break;
       case 'call':
         this.call(t, r, at, key);
         break;
       case 'callOutput': {
+        // The call has ended: its row goes now, with its output at full capture.
+        const call = t.calls.get(r.callId);
+        if (call && call.t1 === null) {
+          // Where a command ran in it, the call's output is what the command printed (commandRow), not what the tool handed back.
+          const ended: QueuedRow = { ...call, t1: at, ...(r.output ? { raw: { output: r.output, ...call.raw } } : {}) };
+          t.calls.set(r.callId, ended);
+          this.row(t, ended);
+        }
         const loop = t.fileLoop;
         const tool = loop.open.get(r.callId);
         if (tool !== undefined) {
@@ -744,7 +823,8 @@ export class Fleet {
       }
       case 'command': {
         // Exit status is known only from these paginated-history items, never from output text.
-        const failed = r.status === 'failed' || (r.exitCode !== null && r.exitCode !== 0);
+        const failed = r.failed;
+        this.commandRow(t, r, at);
         if (failed) {
           t.commandFailures++;
           t.lastFailedCommand = { at, summary: r.summary, exitCode: r.exitCode };
@@ -764,14 +844,53 @@ export class Fleet {
         break;
       case 'message':
         if (r.text) this.activityEntry(t, { at, kind: 'text', text: r.text });
+        if (r.raw) t.said.message = joinRaw(t.said.message, r.raw);
+        break;
+      case 'reasoning':
+        t.said.thinking = joinRaw(t.said.thinking, r.raw);
         break;
       case 'questionReply':
         this.questionsReplied(t, r.ids);
         break;
       case 'prompt':
         t.firstPrompt ??= r.text;
+        // At full capture, the running turn's row is sent again with what the user sent in it (Codex places a user message in the
+        // turn its TurnStarted opened: app-server-protocol/src/protocol/thread_history.rs:606-622).
+        if (r.raw && t.turnRow) {
+          t.turnRow = { ...t.turnRow, raw: { prompt: joinRaw(t.turnRow.raw?.prompt, r.raw) } };
+          this.row(t, t.turnRow);
+        }
         break;
     }
+  }
+
+  /**
+   * A `command` item's outcome and exit code, the only source of either: completed with exit 0 or none `ok`, failed or
+   * a non-zero exit `failed`, declined `denied`; on a failed one, `errorHash` is the SHA-256 of its issue key (protocol errorKey over
+   * its output), the output never sent at `trace`. They go onto the row of the call that ran it, sent again (the stored row
+   * replaced) when that call has ended, else with its output: the call of its id, or, in code mode, where the model's one call is
+   * a script (`exec`) and each command it runs has an id of its own (`exec-<uuid>`), the call open when the command ran. So a
+   * command is never a second row beside its call, and a script's first failed command is how its call went. A command no call
+   * ran is its own row, at the one time the item records.
+   */
+  private commandRow(t: Thread, r: Extract<RolloutRecord, { kind: 'command' }>, at: number): void {
+    if (capture === 'off') return;
+    const openId = [...t.fileLoop.open.keys()].at(-1);
+    const call = t.calls.get(r.id) ?? (openId === undefined ? undefined : t.calls.get(openId));
+    if (call?.outcome === 'failed') return;
+    const tool = call?.tool ?? 'Shell';
+    const key = r.failed && r.output !== null ? errorKey(tool, r.output, true) : null;
+    const said: RowText = capture === 'full' && r.output ? { output: r.output } : {};
+    const raw: RowText = call ? { ...call.raw, ...said } : { ...(r.input ? { input: r.input } : {}), ...said };
+    const row: QueuedRow = {
+      ...(call ?? { id: r.id, kind: 'tool', agentId: null, t0: at, t1: null, tool, callHash: null }),
+      ...(Object.keys(raw).length ? { raw } : {}),
+      outcome: r.status === 'declined' ? 'denied' : r.failed ? 'failed' : r.status === 'completed' ? 'ok' : null,
+      exit: r.exitCode,
+      errorHash: key === null ? null : createHash('sha256').update(key).digest('hex'),
+    };
+    this.keepCall(t, row);
+    if (!call || call.t1 !== null) this.row(t, row);
   }
 
   /**
@@ -814,6 +933,11 @@ export class Fleet {
     loop.toolCalls++;
     loop.lastTool = r.name;
     loop.open.set(r.callId, r.name);
+    t.responseAt ??= at;
+    // Its row waits for its output (callOutput): a tool call is sent when it ends, as the tool Codex names it.
+    if (capture !== 'off') {
+      this.keepCall(t, { id: r.callId, kind: 'tool', agentId: null, t0: at, t1: null, tool: r.name, outcome: null, exit: null, callHash: r.hash ?? null, errorHash: null, ...(r.input ? { raw: { input: r.input } } : {}) });
+    }
     if (this.entriesFrom(t, 'file')) this.activityEntry(t, { at, kind: 'tool', text: r.summary, id: r.callId });
     if (r.spawnPrompt !== null) {
       t.spawnCalls.set(r.callId, r.spawnPrompt);
@@ -856,6 +980,8 @@ export class Fleet {
     this.idle(t, at);
     this.turnBoundary(t, at);
     t.turnId = null;
+    if (t.turnRow) this.row(t, { ...t.turnRow, t1: at, end: r.failed ? 'error' : r.aborted ? 'aborted' : 'answer' });
+    t.turnRow = null;
     // Codex's TUI drops async questions still pending when the live turn ends (tui/src/chatwidget/protocol.rs:478-507).
     for (const q of t.asyncQuestions.values()) if (q.state === 'open') q.state = 'ended';
     if (r.answer) t.answer = r.answer;
@@ -888,8 +1014,8 @@ export class Fleet {
   addUsage(t: Thread, r: Extract<RolloutRecord, { kind: 'usage' }>, fileModel: string | null): void {
     if (r.threadId !== t.id || t.responses.has(r.responseId)) return;
     t.responses.add(r.responseId);
-    const { input, cached, cacheWrite, output } = r.usage;
-    const u: UsageTokens = { input: uncachedInput(input, cached, cacheWrite), cacheRead: cached, output, cacheWrite, cacheWrite1h: 0 };
+    const { input } = r.usage;
+    const u: UsageTokens = { ...tokensOf(r.usage), cacheWrite1h: 0 };
     const model = fileModel ?? t.model.file ?? t.model.hook ?? t.model.daemon;
     if (model) {
       const tier: ModelUsage['tier'] = input > LONG_INPUT ? 'long' : 'std';
@@ -1117,14 +1243,14 @@ export class Fleet {
   }
 
   /**
-   * The status rules (the Claude reporter's withStatus) on Codex facts: done after SessionEnd; waiting on permission
+   * The status rules (the Claude reporter's withStatus) on Codex facts: done once the session is over (hasEnded); waiting on permission
    * while any thread of the session waits on an approval; waiting on input while one waits on a question (the daemon's
    * `waitingOnUserInput`); idle while the root's turn has ended — Stop, Interrupt, `task_complete`, `turn_aborted` or the
    * daemon's idle status — and no child runs, which asks nothing of the owner; otherwise running.
    */
   statusOf(s: Session, notes: ReadonlyMap<string, string> = new Map(), now = Date.now()): SessionState {
     const root = this.thread(s.id);
-    if (root.ended) return { status: 'done', waitReason: null, waitNote: null };
+    if (this.hasEnded(root)) return { status: 'done', waitReason: null, waitNote: null };
     const threads = this.threadsOf(s.id);
     const approval = threads.find((t) => this.waitingOn(t) === 'approval');
     if (approval) return { status: 'waiting', waitReason: 'permission', waitNote: notes.get(approval.id) ?? approval.permission?.note ?? null };
@@ -1136,12 +1262,22 @@ export class Fleet {
   }
 
   /**
+   * Whether a root's session is over: Codex's end hook is the last it said, and the daemon does not hold the thread. Codex
+   * runs that hook when it tears a thread's runtime down (`core/src/session/handlers.rs` `shutdown_session_runtime`,
+   * rust-v0.167.0), as at an idle unload or a stop of its daemon. A thread opened again after that says nothing through a
+   * hook until its next turn, and the daemon holds it: open.
+   */
+  hasEnded(root: Thread): boolean {
+    return root.ended && !root.loaded;
+  }
+
+  /**
    * Whether the session is reported: a thread of it is loaded in the daemon, or a hook or session-file event
-   * arrived within LIVE_WINDOW_MS (30 minutes), and the root has not ended.
+   * arrived within LIVE_WINDOW_MS (30 minutes), and the session is not over.
    */
   isLive(s: Session, now = Date.now()): boolean {
     const threads = this.threadsOf(s.id);
-    if (this.thread(s.id).ended) return false;
+    if (this.hasEnded(this.thread(s.id))) return false;
     return threads.some((t) => t.loaded || now - t.lastEvidenceAt <= LIVE_WINDOW_MS);
   }
 
@@ -1162,6 +1298,13 @@ export class Fleet {
   drainEvents(s: Session): ActivityEvent[] {
     const out = s.events;
     s.events = [];
+    return out;
+  }
+
+  /** The rows queued since the last call. */
+  drainRows(s: Session): QueuedRow[] {
+    const out = s.rows;
+    s.rows = [];
     return out;
   }
 }
